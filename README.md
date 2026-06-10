@@ -1,4 +1,4 @@
-# ZMD Gacha Bot - 自动抽卡QQ机器人
+# TOARU Gacha Bot - 某个魔魔人游戏的自动抽卡QQ机器人
 
 基于 Napcat 框架的自动抽卡QQ机器人，支持盲盒系统、保底机制、碎片兑换等功能。
 
