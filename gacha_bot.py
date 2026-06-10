@@ -109,25 +109,25 @@ except ImportError:
     GET_GACHA_REWARD = 10000  # 获取呱太奖励
     DAILY_REWARD = 30000     # 每日签到奖励
     # 盲盒开箱配置
-    MYSTERY_BOX_CHANCE = 0.02  # 黑色盲盒概率2%
-    MUTATION_NO_CHANGE = 0.88  # 不突变概率88%
-    MUTATION_1_TO_2 = 0.08    # 1星→2星概率8%
-    MUTATION_1_TO_3 = 0.02    # 1星→3星概率2%
-    MUTATION_2_TO_3 = 0.05    # 2星→3星概率5%
+    MYSTERY_BOX_CHANCE = 0.5  # 黑色盲盒概率
+    MUTATION_NO_CHANGE = 0.5  # 不突变概率
+    MUTATION_1_TO_2 = 0.5    # 1星→2星概率
+    MUTATION_1_TO_3 = 0.5    # 1星→3星概率
+    MUTATION_2_TO_3 = 0.5    # 2星→3星概率
     BOX_OPEN_TIMEOUT = 300     # 盲盒开启超时时间（秒）
     # 三星池子配置
     THREE_STAR_POOL_RED_COST = 1500   # 红色碎片消耗
     THREE_STAR_POOL_BLUE_COST = 350   # 蓝色碎片消耗
     # 抽卡概率（三星内部分配）
-    FES_LIMIT_PROB = 0.25     # フェス限定概率
-    PERIOD_LIMIT_PROB = 0.35  # 期間限定概率
-    OTHER_3STAR_PROB = 0.40   # 其他三星概率
+    FES_LIMIT_PROB = 0.5     # フェス限定概率
+    PERIOD_LIMIT_PROB = 0.5  # 期間限定概率
+    OTHER_3STAR_PROB = 0.5   # 其他三星概率
     # 盲盒星级概率
-    MYSTERY_BOX_2STAR_PROB = 65  # 黑色盲盒2星概率（权重）
-    MYSTERY_BOX_3STAR_PROB = 35  # 黑色盲盒3星概率（权重）
-    NORMAL_BOX_1STAR_PROB = 72   # 正常盲盒1星概率（权重）
-    NORMAL_BOX_2STAR_PROB = 25   # 正常盲盒2星概率（权重）
-    NORMAL_BOX_3STAR_PROB = 3    # 正常盲盒3星概率（权重）
+    MYSTERY_BOX_2STAR_PROB = 0.5  # 黑色盲盒2星概率
+    MYSTERY_BOX_3STAR_PROB = 0.5  # 黑色盲盒3星概率
+    NORMAL_BOX_1STAR_PROB = 0.5   # 正常盲盒1星概率
+    NORMAL_BOX_2STAR_PROB = 0.5   # 正常盲盒2星概率
+    NORMAL_BOX_3STAR_PROB = 0.5   # 正常盲盒3星概率
 app = Flask(__name__)
 
 
