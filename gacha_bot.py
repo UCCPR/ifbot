@@ -53,28 +53,11 @@ XLSX_FILE = BASE_DIR / "卡牌信息.xlsx"
 INFO_DIR = BASE_DIR / "info"
 OUTPUT_DIR = BASE_DIR / "output"
 
-# 保底配置
-PITY_LIMIT = 150  # 150抽必出フェス限定三星
-
-# 呱太配置
-GACHA_COST = 300        # 单抽价格
-GACHA10_COST = 3000     # 十连价格
-GET_GACHA_REWARD = 10000  # 获取呱太奖励
-DAILY_REWARD = 30000     # 每日签到奖励
-
-# 盲盒开箱配置
-MYSTERY_BOX_CHANCE = 0.02  # 黑色盲盒概率2%
-MUTATION_NO_CHANGE = 0.88  # 不突变概率88%
-MUTATION_1_TO_2 = 0.08    # 1星→2星概率8%
-MUTATION_1_TO_3 = 0.02    # 1星→3星概率2%
-MUTATION_2_TO_3 = 0.05    # 2星→3星概率5%   
-BOX_OPEN_TIMEOUT = 300     # 盲盒开启超时时间（秒）
-
 # 确保目录存在
 INFO_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# 从配置文件导入敏感信息
+# 从配置文件导入配置信息
 # 请在 config.py 文件中填写实际的配置值
 try:
     from config import (
@@ -82,7 +65,34 @@ try:
         NAPCAT_PORT,
         NAPCAT_TOKEN,
         FLASK_HOST,
-        FLASK_PORT
+        FLASK_PORT,
+        # 保底配置
+        PITY_LIMIT,
+        # 呱太配置
+        GACHA_COST,
+        GACHA10_COST,
+        GET_GACHA_REWARD,
+        DAILY_REWARD,
+        # 盲盒开箱配置
+        MYSTERY_BOX_CHANCE,
+        MUTATION_NO_CHANGE,
+        MUTATION_1_TO_2,
+        MUTATION_1_TO_3,
+        MUTATION_2_TO_3,
+        BOX_OPEN_TIMEOUT,
+        # 三星池子配置
+        THREE_STAR_POOL_RED_COST,
+        THREE_STAR_POOL_BLUE_COST,
+        # 抽卡概率（三星内部分配）
+        FES_LIMIT_PROB,
+        PERIOD_LIMIT_PROB,
+        OTHER_3STAR_PROB,
+        # 盲盒星级概率
+        MYSTERY_BOX_2STAR_PROB,
+        MYSTERY_BOX_3STAR_PROB,
+        NORMAL_BOX_1STAR_PROB,
+        NORMAL_BOX_2STAR_PROB,
+        NORMAL_BOX_3STAR_PROB
     )
 except ImportError:
     # 如果配置文件不存在，使用默认值
@@ -91,6 +101,33 @@ except ImportError:
     NAPCAT_TOKEN = ""
     FLASK_HOST = "0.0.0.0"
     FLASK_PORT = 5000
+    # 保底配置
+    PITY_LIMIT = 150  # 150抽必出フェス限定三星
+    # 呱太配置
+    GACHA_COST = 300        # 单抽价格
+    GACHA10_COST = 3000     # 十连价格
+    GET_GACHA_REWARD = 10000  # 获取呱太奖励
+    DAILY_REWARD = 30000     # 每日签到奖励
+    # 盲盒开箱配置
+    MYSTERY_BOX_CHANCE = 0.02  # 黑色盲盒概率2%
+    MUTATION_NO_CHANGE = 0.88  # 不突变概率88%
+    MUTATION_1_TO_2 = 0.08    # 1星→2星概率8%
+    MUTATION_1_TO_3 = 0.02    # 1星→3星概率2%
+    MUTATION_2_TO_3 = 0.05    # 2星→3星概率5%
+    BOX_OPEN_TIMEOUT = 300     # 盲盒开启超时时间（秒）
+    # 三星池子配置
+    THREE_STAR_POOL_RED_COST = 1500   # 红色碎片消耗
+    THREE_STAR_POOL_BLUE_COST = 350   # 蓝色碎片消耗
+    # 抽卡概率（三星内部分配）
+    FES_LIMIT_PROB = 0.25     # フェス限定概率
+    PERIOD_LIMIT_PROB = 0.35  # 期間限定概率
+    OTHER_3STAR_PROB = 0.40   # 其他三星概率
+    # 盲盒星级概率
+    MYSTERY_BOX_2STAR_PROB = 65  # 黑色盲盒2星概率（权重）
+    MYSTERY_BOX_3STAR_PROB = 35  # 黑色盲盒3星概率（权重）
+    NORMAL_BOX_1STAR_PROB = 72   # 正常盲盒1星概率（权重）
+    NORMAL_BOX_2STAR_PROB = 25   # 正常盲盒2星概率（权重）
+    NORMAL_BOX_3STAR_PROB = 3    # 正常盲盒3星概率（权重）
 app = Flask(__name__)
 
 
@@ -257,6 +294,112 @@ def add_blue_crystal(user_id: str, amount: int):
     pity_data["blue_crystal"] = pity_data.get("blue_crystal", 0) + amount
     save_pity_data(user_id, pity_data)
     return pity_data["blue_crystal"]
+
+
+def spend_red_crystal(user_id: str, amount: int) -> bool:
+    """消耗用户的红色碎片，返回是否成功"""
+    pity_data = load_pity_data(user_id)
+    current = pity_data.get("red_crystal", 0)
+    if current >= amount:
+        pity_data["red_crystal"] = current - amount
+        save_pity_data(user_id, pity_data)
+        return True
+    return False
+
+
+def spend_blue_crystal(user_id: str, amount: int) -> bool:
+    """消耗用户的蓝色碎片，返回是否成功"""
+    pity_data = load_pity_data(user_id)
+    current = pity_data.get("blue_crystal", 0)
+    if current >= amount:
+        pity_data["blue_crystal"] = current - amount
+        save_pity_data(user_id, pity_data)
+        return True
+    return False
+
+
+# ========== 三星池子系统 ==========
+# 三星池子配置
+THREE_STAR_POOL_RED_COST = 1500  # 红色碎片消耗
+THREE_STAR_POOL_BLUE_COST = 350  # 蓝色碎片消耗
+
+
+def select_3star_from_pool(characters: list) -> dict:
+    """从三星池子中随机抽取一个角色（只返回三星角色）"""
+    three_star_chars = [c for c in characters if c.get("stars") == 3]
+    
+    if not three_star_chars:
+        return None
+    
+    # 随机选择
+    selected = random.choice(three_star_chars)
+    return selected
+
+
+def draw_3star_pool(user_id: str, crystal_type: str = "red") -> dict:
+    """
+    抽取三星池子
+    :param user_id: 用户ID
+    :param crystal_type: 碎片类型 "red" 或 "blue"
+    :return: 抽卡结果
+    """
+    characters = get_characters()
+    
+    # 检查碎片是否足够
+    if crystal_type == "red":
+        cost = THREE_STAR_POOL_RED_COST
+        if not spend_red_crystal(user_id, cost):
+            return {
+                "success": False,
+                "message": f"红色碎片不足！需要{cost}个，当前拥有{get_red_crystal(user_id)}个"
+            }
+    else:
+        cost = THREE_STAR_POOL_BLUE_COST
+        if not spend_blue_crystal(user_id, cost):
+            return {
+                "success": False,
+                "message": f"蓝色碎片不足！需要{cost}个，当前拥有{get_blue_crystal(user_id)}个"
+            }
+    
+    # 抽取角色
+    selected = select_3star_from_pool(characters)
+    
+    if not selected:
+        return {
+            "success": False,
+            "message": "三星池子为空，请联系管理员！"
+        }
+    
+    # 处理抽卡结果
+    card_id = str(selected.get("card_id", ""))
+    chara_id = selected.get("id", "")
+    name = selected.get("name", "")
+    limit_type = selected.get("limit_type", "")
+    stars = selected.get("stars", 3)
+    
+    # FES统计和提示
+    fes_message = ""
+    if limit_type == "フェス限定":
+        # 增加FES统计
+        fes_count = increment_fes_count(card_id, name)
+        fes_message = f"✨ 恭喜！这是全服第{fes_count}个「{name}」！"
+    
+    # 添加到用户卡库
+    add_card_collection(user_id, card_id, name, stars, limit_type)
+    
+    # 添加到最近三星记录
+    add_recent_3star(user_id, card_id, chara_id, name, limit_type)
+    
+    # 更新统计（三星池子抽出的都是三星）
+    is_fes_3star = (limit_type == "フェス限定")
+    update_pity(user_id, got_3star=True, is_fes_3star=is_fes_3star)
+    
+    return {
+        "success": True,
+        "character": selected,
+        "message": f"恭喜获得三星角色：{name}",
+        "fes_message": fes_message
+    }
 
 
 def add_recent_3star(user_id: str, card_id: str, chara_id: str, name: str, limit_type: str = None):
@@ -548,16 +691,16 @@ def draw_mystery_box(characters: list, user_id: str = None, is_pity: bool = Fals
     is_mystery = random.random() < MYSTERY_BOX_CHANCE
     
     if is_mystery:
-        # 黑色盲盒：3星35%，2星65%
-        stars = random.choices([2, 3], weights=[65, 35], k=1)[0]
+        # 黑色盲盒概率（从配置读取）
+        stars = random.choices([2, 3], weights=[MYSTERY_BOX_2STAR_PROB, MYSTERY_BOX_3STAR_PROB], k=1)[0]
         return {
             "stars": stars,
             "is_mystery": True,
             "character": None  # 黑色盲盒还没开，所以没有角色
         }
     else:
-        # 正常盲盒：1星72%，2星25%，3星3%
-        stars = random.choices([1, 2, 3], weights=[72, 25, 3], k=1)[0]
+        # 正常盲盒概率（从配置读取）
+        stars = random.choices([1, 2, 3], weights=[NORMAL_BOX_1STAR_PROB, NORMAL_BOX_2STAR_PROB, NORMAL_BOX_3STAR_PROB], k=1)[0]
         
         # 如果是3星，根据限定种类概率分配
         if stars == 3:
@@ -601,19 +744,19 @@ def select_3star_character(characters: list, is_fes_pity: bool = False) -> dict:
     fes_limited = [c for c in all_3stars if c.get("limit_type") == "フェス限定"]
     other_3stars = [c for c in all_3stars if c.get("limit_type") not in ["期間限定", "フェス限定"]]
     
-    # 概率分配：期間限定35%，フェス限定25%，其余40%
+    # 概率分配（从配置读取）
     categories = []
     weights = []
     
     if period_limited:
         categories.append(period_limited)
-        weights.append(35)
+        weights.append(PERIOD_LIMIT_PROB)
     if fes_limited:
         categories.append(fes_limited)
-        weights.append(25)
+        weights.append(FES_LIMIT_PROB)
     if other_3stars:
         categories.append(other_3stars)
-        weights.append(40)
+        weights.append(OTHER_3STAR_PROB)
     
     if not categories:
         return random.choice(all_3stars)
@@ -780,10 +923,10 @@ def open_mystery_box(box_info: dict, characters: list) -> dict:
     开黑色盲盒，获取实际角色
     """
     if not box_info["is_mystery"]:
-        # 不是黑色盲盒，直接应用突变返回
-        return apply_mutation(box_info)
+        # 不是黑色盲盒，直接返回（突变在调用处处理）
+        return box_info
     
-    # 黑色盲盒：3星40%，2星60%
+    # 黑色盲盒：3星40%，2星60%（stars已在创建时确定）
     stars = box_info["stars"]
     available = [c for c in characters if c["stars"] == stars]
     if available:
@@ -1759,7 +1902,9 @@ def handle_message():
             return handle_show_details(user_id, group_id)
         elif '三王女' in raw_message:
             return handle_sannoujo(user_id, group_id)
-
+        elif '三星池子' in raw_message or '红抽' in raw_message or '蓝抽' in raw_message:
+            return handle_3star_pool(user_id, group_id, raw_message)
+        
         return jsonify({"status": "ignored"})
 
     except Exception as e:
@@ -2145,8 +2290,10 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         blue_crystal_gained = 0
         
         # 开盲盒
+        log_info(f"用户 {user_id} 开启盲盒，共 {len(indices)} 个，索引: {indices}")
         for idx in indices:
             box = boxes[idx]
+            log_info(f"处理盲盒 {idx+1}: stars={box.get('stars')}, is_mystery={box.get('is_mystery')}, opened={box.get('opened')}")
             
             # 先开黑色盲盒获取角色
             if box["is_mystery"] and not box.get("opened"):
@@ -2166,6 +2313,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
             if not character:
                 # 正常盲盒需要获取角色
                 stars = box["stars"]
+                log_info(f"盲盒 {idx+1} 没有角色，stars={stars}，需要随机选择")
                 available = [c for c in characters if c["stars"] == stars]
                 if available:
                     character = random.choice(available)
@@ -2175,6 +2323,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
                 boxes[idx] = box
             
             stars = box["stars"]
+            log_info(f"盲盒 {idx+1} 最终 stars={stars}，character={character.get('name') if character else 'None'}")
             
             # 更新卡片收藏和数量统计
             card_id = str(character.get("card_id", ""))
@@ -2193,10 +2342,12 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
                 # 1星卡转化为红色碎片
                 add_red_crystal(user_id, 1)
                 red_crystal_gained += 1
+                log_info(f"用户 {user_id} 获得红色碎片 +1（1星卡）")
             elif stars == 2:
                 # 2星卡转化为蓝色碎片
                 add_blue_crystal(user_id, 1)
                 blue_crystal_gained += 1
+                log_info(f"用户 {user_id} 获得蓝色碎片 +1（2星卡）")
                 # 更新二星数量
                 add_card_collection(user_id, card_id, chara_name, stars, limit_type)
             elif stars == 3:
@@ -2828,6 +2979,122 @@ def handle_exchange_crystal(user_id: str, group_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+# ========== 三星池子命令处理 ==========
+def handle_3star_pool(user_id: str, group_id, raw_message: str):
+    """
+    处理三星池子抽卡请求
+    命令格式:
+    - 三星池子 - 显示三星池子介绍
+    - 红抽 - 使用红色碎片抽卡
+    - 蓝抽 - 使用蓝色碎片抽卡
+    """
+    try:
+        # 检测抽卡类型
+        if '红抽' in raw_message:
+            crystal_type = "red"
+            crystal_name = "红色碎片"
+            cost = THREE_STAR_POOL_RED_COST
+            current = get_red_crystal(user_id)
+        elif '蓝抽' in raw_message:
+            crystal_type = "blue"
+            crystal_name = "蓝色碎片"
+            cost = THREE_STAR_POOL_BLUE_COST
+            current = get_blue_crystal(user_id)
+        else:
+            # 显示三星池子介绍
+            red_crystal = get_red_crystal(user_id)
+            blue_crystal = get_blue_crystal(user_id)
+            
+            reply = f"""╔══════════════════════════════╗
+║     ★★★ 三星池子 ★★★       ║
+╠══════════════════════════════╣
+║ 消耗说明:                    ║
+║ 🔴 红色碎片: {THREE_STAR_POOL_RED_COST}个/抽       ║
+║ 🔵 蓝色碎片: {THREE_STAR_POOL_BLUE_COST}个/抽       ║
+╠══════════════════════════════╣
+║ 你当前拥有:                  ║
+║ 🔴 红色碎片: {red_crystal}个            ║
+║ 🔵 蓝色碎片: {blue_crystal}个            ║
+╠══════════════════════════════╣
+║ 可抽取次数:                  ║
+║ 🔴 红色碎片: {red_crystal // THREE_STAR_POOL_RED_COST}次          ║
+║ 🔵 蓝色碎片: {blue_crystal // THREE_STAR_POOL_BLUE_COST}次          ║
+╠══════════════════════════════╣
+║ 输入「三星池子红抽」使用红色碎片抽卡    ║
+║ 输入「三星池子蓝抽」使用蓝色碎片抽卡    ║
+╚══════════════════════════════╝
+"""
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}]\n{reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "success", "message": "显示三星池子"})
+        
+        # 执行抽卡
+        result = draw_3star_pool(user_id, crystal_type)
+        
+        if not result["success"]:
+            reply = result["message"]
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": result["message"]})
+        
+        # 抽卡成功，生成结果图片
+        selected = result["character"]
+        card_id = str(selected.get("card_id", ""))
+        fes_message = result.get("fes_message", "")
+        
+        # 生成单抽结果图片（使用抽卡结果背景）
+        img_bytes = composite_card(selected)
+        img_path = None
+        
+        if img_bytes:
+            # 保存图片到临时文件
+            output_idx = random.randint(1000, 9999)
+            img_path = OUTPUT_DIR / f"3star_pool_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
+            with open(img_path, "wb") as f:
+                f.write(img_bytes)
+        
+        if img_path and os.path.exists(img_path):
+            with open(img_path, "rb") as f:
+                image_base64 = base64.b64encode(f.read()).decode("utf-8")
+            img_message = f"[CQ:image,file=base64://{image_base64}]"
+            
+            # 发送结果（包含FES提示）
+            if group_id and user_id:
+                at_message = f"[CQ:at,qq={user_id}] "
+            else:
+                at_message = ""
+            
+            remaining = current - cost
+            # 如果有FES提示，添加到消息中
+            fes_text = f"\n{fes_message}" if fes_message else ""
+            full_message = f"{at_message}💎 使用{cost}个{crystal_name}抽卡！{fes_text}\n{img_message}\n剩余{crystal_name}: {remaining}个"
+            send_message(full_message, user_id, group_id)
+            
+            if os.path.exists(img_path):
+                os.remove(img_path)
+        else:
+            # 如果没有图片，发送文字消息
+            fes_text = f"\n{fes_message}" if fes_message else ""
+            reply = f"💎 使用{cost}个{crystal_name}抽卡！\n{result['message']}{fes_text}\n剩余{crystal_name}: {current - cost}个"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+        
+        log_info(f"三星池子抽卡 [{user_id}]: type={crystal_type}, card={selected.get('name')}")
+        
+        return jsonify({
+            "status": "success",
+            "message": result["message"],
+            "character": selected.get("name")
+        })
+    
+    except Exception as e:
+        log_error(f"三星池子抽卡失败: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 def handle_team(user_id: str, group_id, raw_message: str):
     """处理配队相关命令"""
     try:
@@ -3077,15 +3344,20 @@ def handle_help(user_id: str, group_id):
 ║ 个人记录 - 查看个人抽卡统计    ║
 ║ 兑换呱太 - 用碎片兑换呱太      ║
 ║ 排行榜 - 查看战力排行榜        ║
+║ 三星池子 - 查看三星池子介绍    ║
 ║ 队伍  - 查看当前队伍        ║
 ║ 帮助  - 显示此帮助         ║
 ╠══════════════════════════════╣
 ║ 保底机制: 150抽必出FES限定   ║
 ║ 十连保底: 必出至少1个2星     ║
 ╠══════════════════════════════╣
+║ 三星池子:                   ║
+║ 三星池子 - 查看池子介绍      ║
+║ 红抽 - 消耗1500红色碎片抽卡  ║
+║ 蓝抽 - 消耗350蓝色碎片抽卡  ║
+╠══════════════════════════════╣
 ║ 配队命令:                    ║
 ║ 队伍 我的卡 - 查看三星卡(翻页)║
-║ 队伍 我的卡 下一页/上一页    ║
 ║ 队伍 设置 位置 序号(1-10)   ║
 ║ 队伍 清除 位置             ║
 ║ 队伍 清空 - 清空队伍       ║
