@@ -1,7 +1,8 @@
-# TOARU Bot - 某个魔魔人游戏的自动模拟抽卡QQbot
+# TOARU Bot - 幻想收束的模拟抽卡QQbot
 
-基于 Napcat 框架的模拟抽卡QQbot，支持井池、保底机制、碎片兑换等功能。
+基于 Napcat 框架的ifbot
 
+仅供群友自娱自乐，有需要直接issue我喵
 ## 声明
 本项目仅用于个人学习，不得用于盈利用途
 ## 功能特性
