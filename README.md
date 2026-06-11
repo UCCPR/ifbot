@@ -1,10 +1,17 @@
 # TOARU Bot - 幻想收束的模拟抽卡QQbot
 
+![Python](https://img.shields.io/badge/-Python-000000?style=flat&logo=python)  
 基于 Napcat 框架的ifbot
 
-仅供群友自娱自乐，有需要直接issue我喵
+仅供群友自娱自乐，有需要请直接issue我
 ## 声明
 本项目仅用于个人学习，不得用于盈利用途
+
+## 战绩
+![无敌了](RMIMAGE/战绩.png)  
+
+群友们一天抽了一万多次，鉴定为纯血ifp👍，账号已做脱敏处理
+
 ## 功能特性
 
 ### 抽卡系统
@@ -191,4 +198,8 @@ MIT License
 
 ## 贡献
 
+<<<<<<< HEAD
 欢迎提交 Issue 和 Pull Request！
+=======
+欢迎提交 Issue 和 Pull Request！
+>>>>>>> 0741aadc383b9b22bbd41eff52cd107ef781d41f
