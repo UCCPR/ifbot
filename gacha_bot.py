@@ -57,6 +57,25 @@ OUTPUT_DIR = BASE_DIR / "output"
 INFO_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+# ========== 日志模块（必须在其他模块之前定义）==========
+def log_info(message: str):
+    """记录普通信息到info目录"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_file = INFO_DIR / "gacha_info.log"
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] [INFO] {message}\n")
+    print(f"[INFO] {message}")
+
+
+def log_error(message: str):
+    """记录错误信息到info目录"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_file = INFO_DIR / "gacha_error.log"
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] [ERROR] {message}\n")
+    print(f"[ERROR] {message}")
+
+
 # 从配置文件导入配置信息
 # 请在 config.py 文件中填写实际的配置值
 try:
@@ -73,7 +92,7 @@ try:
         GACHA10_COST,
         GET_GACHA_REWARD,
         DAILY_REWARD,
-        # 盲盒开箱配置
+        # 开箱配置
         MYSTERY_BOX_CHANCE,
         MUTATION_NO_CHANGE,
         MUTATION_1_TO_2,
@@ -92,7 +111,11 @@ try:
         MYSTERY_BOX_3STAR_PROB,
         NORMAL_BOX_1STAR_PROB,
         NORMAL_BOX_2STAR_PROB,
-        NORMAL_BOX_3STAR_PROB
+        NORMAL_BOX_3STAR_PROB,
+        # 抽卡星级概率（呱太抽卡）
+        GACHA_1STAR_PROB,
+        GACHA_2STAR_PROB,
+        GACHA_3STAR_PROB
     )
 except ImportError:
     # 如果配置文件不存在，使用默认值
@@ -108,26 +131,42 @@ except ImportError:
     GACHA10_COST = 3000     # 十连价格
     GET_GACHA_REWARD = 10000  # 获取呱太奖励
     DAILY_REWARD = 30000     # 每日签到奖励
-    # 盲盒开箱配置
-    MYSTERY_BOX_CHANCE = 0.5  # 黑色盲盒概率
-    MUTATION_NO_CHANGE = 0.5  # 不突变概率
-    MUTATION_1_TO_2 = 0.5    # 1星→2星概率
-    MUTATION_1_TO_3 = 0.5    # 1星→3星概率
-    MUTATION_2_TO_3 = 0.5    # 2星→3星概率
+    # 开箱配置
+    MYSTERY_BOX_CHANCE = 0.02  # 黑色盲盒概率
+    MUTATION_NO_CHANGE = 0.88  # 不突变概率
+    MUTATION_1_TO_2 = 0.08    # 1星→2星概率
+    MUTATION_1_TO_3 = 0.02    # 1星→3星概率
+    MUTATION_2_TO_3 = 0.05    # 2星→3星概率
     BOX_OPEN_TIMEOUT = 300     # 盲盒开启超时时间（秒）
     # 三星池子配置
     THREE_STAR_POOL_RED_COST = 1500   # 红色碎片消耗
     THREE_STAR_POOL_BLUE_COST = 350   # 蓝色碎片消耗
     # 抽卡概率（三星内部分配）
-    FES_LIMIT_PROB = 0.5     # フェス限定概率
-    PERIOD_LIMIT_PROB = 0.5  # 期間限定概率
-    OTHER_3STAR_PROB = 0.5   # 其他三星概率
-    # 盲盒星级概率
-    MYSTERY_BOX_2STAR_PROB = 0.5  # 黑色盲盒2星概率
-    MYSTERY_BOX_3STAR_PROB = 0.5  # 黑色盲盒3星概率
-    NORMAL_BOX_1STAR_PROB = 0.5   # 正常盲盒1星概率
-    NORMAL_BOX_2STAR_PROB = 0.5   # 正常盲盒2星概率
-    NORMAL_BOX_3STAR_PROB = 0.5   # 正常盲盒3星概率
+    FES_LIMIT_PROB = 0.25     # フェス限定概率
+    PERIOD_LIMIT_PROB = 0.35  # 期間限定概率
+    OTHER_3STAR_PROB = 0.40   # 其他三星概率
+    # 不跳过的十连和单抽星级概率
+    MYSTERY_BOX_2STAR_PROB = 65  # 黑色盲盒2星概率（权重）
+    MYSTERY_BOX_3STAR_PROB = 35  # 黑色盲盒3星概率（权重）
+    NORMAL_BOX_1STAR_PROB = 72   # 正常盲盒1星概率（权重）
+    NORMAL_BOX_2STAR_PROB = 23   # 正常盲盒2星概率（权重）
+    NORMAL_BOX_3STAR_PROB = 3    # 正常盲盒3星概率（权重）
+    # 十连跳过概率
+    GACHA_1STAR_PROB = 72   # 1星概率（权重）
+    GACHA_2STAR_PROB = 23   # 2星概率（权重）
+    GACHA_3STAR_PROB = 3    # 3星概率（权重）
+
+# 定义概率权重常量（避免代码重复）
+GACHA_WEIGHTS = [GACHA_1STAR_PROB, GACHA_2STAR_PROB, GACHA_3STAR_PROB]
+NORMAL_BOX_WEIGHTS = [NORMAL_BOX_1STAR_PROB, NORMAL_BOX_2STAR_PROB, NORMAL_BOX_3STAR_PROB]
+MYSTERY_BOX_WEIGHTS = [MYSTERY_BOX_2STAR_PROB, MYSTERY_BOX_3STAR_PROB]
+
+# 定义角色图裁剪比例常量
+CROP_LEFT_RATIO = 0.25
+CROP_RIGHT_RATIO = 0.75
+CROP_TOP_RATIO = 0.15
+CROP_BOTTOM_RATIO = 0.65
+
 app = Flask(__name__)
 
 
@@ -152,25 +191,6 @@ def get_characters():
     return preload_characters()
 
 
-# ========== 日志模块 ==========
-def log_info(message: str):
-    """记录普通信息到info目录"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_file = INFO_DIR / "gacha_info.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] [INFO] {message}\n")
-    print(f"[INFO] {message}")
-
-
-def log_error(message: str):
-    """记录错误信息到info目录"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_file = INFO_DIR / "gacha_error.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] [ERROR] {message}\n")
-    print(f"[ERROR] {message}")
-
-
 # 记录配队系统加载状态
 if TEAM_SYSTEM_LOADED:
     log_info("配队系统加载成功")
@@ -191,21 +211,17 @@ def load_pity_data(user_id: str) -> dict:
         try:
             with open(pity_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            return {
-                "total_draws": 0, 
-                "pity_count": 0, 
-                "fes_pity_count": 0,
-                "total_3stars": 0,
-                "red_crystal": 0,
-                "blue_crystal": 0,
-                "recent_3stars": [],  # 最近获得的三星卡记录，按时间排序，存储card_id
-                "card_collection": {},  # 卡片收藏 {card_id: {"name": "", "stars": 3, "limit_type": "", "count": 1, "last_time": timestamp}}
-                "fes_count": 0,        # フェス限定数量
-                "period_count": 0,      # 期間限定数量
-                "other_3star_count": 0, # 其他三星数量
-                "total_2stars": 0       # 二星数量
-            }
+        except json.JSONDecodeError as e:
+            log_error(f"用户 {user_id} 的抽卡记录文件格式错误: {e}")
+            return get_default_pity_data()
+        except IOError as e:
+            log_error(f"读取用户 {user_id} 的抽卡记录文件失败: {e}")
+            return get_default_pity_data()
+    return get_default_pity_data()
+
+
+def get_default_pity_data() -> dict:
+    """获取默认的抽卡记录数据"""
     return {
         "total_draws": 0, 
         "pity_count": 0, 
@@ -213,12 +229,12 @@ def load_pity_data(user_id: str) -> dict:
         "total_3stars": 0,
         "red_crystal": 0,
         "blue_crystal": 0,
-        "recent_3stars": [],
-        "card_collection": {},
-        "fes_count": 0,
-        "period_count": 0,
-        "other_3star_count": 0,
-        "total_2stars": 0
+        "recent_3stars": [],  # 最近获得的三星卡记录，按时间排序，存储card_id
+        "card_collection": {},  # 卡片收藏 {card_id: {"name": "", "stars": 3, "limit_type": "", "count": 1, "last_time": timestamp}}
+        "fes_count": 0,        # フェス限定数量
+        "period_count": 0,      # 期間限定数量
+        "other_3star_count": 0, # 其他三星数量
+        "total_2stars": 0       # 二星数量
     }
 
 
@@ -823,7 +839,7 @@ def get_mystery_box_image(stars: int) -> str:
     if path.exists():
         return str(path)
     
-    log_error(f"找不到盲盒图片: gacha_tmb_{star_idx:02d}_02")
+    log_error(f"找不到图片: gacha_tmb_{star_idx:02d}_02")
     return None
 
 
@@ -833,7 +849,7 @@ def get_black_box_image() -> str:
     path = LEVEL_DIR / filename
     if path.exists():
         return str(path)
-    log_error(f"找不到黑色盲盒图片: {filename}")
+    log_error(f"找不到黑色图片: {filename}")
     return None
 
 
@@ -1411,25 +1427,35 @@ def find_character_icon(chara_id, stars: int) -> str:
 
 
 # ========== 抽卡逻辑 ==========
-def draw_cards(count: int, characters: list, user_id: str = None) -> dict:
+from typing import Optional, List, Dict, Any
+
+
+def draw_cards(count: int, characters: List[Dict[str, Any]], user_id: Optional[str] = None) -> Dict[str, Any]:
     """
     抽取指定数量的卡牌
-    使用权重：1星70%，2星25%，3星5%
-    保底机制：每150抽必出3星
+    使用权重：从配置读取概率
+    保底机制：每150抽必出フェス限定3星
     
     :param count: 抽卡数量（1或10）
     :param characters: 角色列表
     :param user_id: 用户ID（用于保底计数）
     :return: {"results": 抽卡结果列表, "remaining_pity": 剩余保底抽数, "got_3star": 是否抽到3星}
     """
+    # 输入验证
     if count not in [1, 10]:
         raise ValueError("抽卡数量只能是1或10")
+    
+    if not characters:
+        raise ValueError("角色列表不能为空")
+    
+    if user_id and not isinstance(user_id, str):
+        raise TypeError("user_id必须是字符串类型")
 
-    results = []
+    results: List[Dict[str, Any]] = []
     got_3star = False
     remaining_pity = 0
     
-    for i in range(count):
+    for _ in range(count):
         # 检查是否触发保底
         if user_id:
             pity_data = load_pity_data(user_id)
@@ -1440,19 +1466,17 @@ def draw_cards(count: int, characters: list, user_id: str = None) -> dict:
             if remaining_before == 1:
                 stars = 3
             else:
-                # 随机决定星级
-                star_weights = {1: 70, 2: 25, 3: 5}
+                # 随机决定星级（使用预定义的权重常量）
                 stars = random.choices(
-                    population=list(star_weights.keys()),
-                    weights=list(star_weights.values()),
+                    population=[1, 2, 3],
+                    weights=GACHA_WEIGHTS,
                     k=1
                 )[0]
         else:
-            # 没有用户ID，正常抽卡
-            star_weights = {1: 70, 2: 25, 3: 5}
+            # 没有用户ID，正常抽卡（使用预定义的权重常量）
             stars = random.choices(
-                population=list(star_weights.keys()),
-                weights=list(star_weights.values()),
+                population=[1, 2, 3],
+                weights=GACHA_WEIGHTS,
                 k=1
             )[0]
 
@@ -1626,12 +1650,12 @@ def composite_card(character: dict) -> bytes:
         frame_width, frame_height = frame_img.size
         
         # ========== 裁剪角色图的指定区域 ==========
-        # 裁剪区域：宽度25%~75%，高度15%~65%
+        # 裁剪区域：宽度25%~75%，高度15%~65%（使用预定义常量）
         char_width, char_height = char_img.size
-        crop_left = int(char_width * 0.25)
-        crop_right = int(char_width * 0.75)
-        crop_top = int(char_height * 0.15)
-        crop_bottom = int(char_height * 0.65)
+        crop_left = int(char_width * CROP_LEFT_RATIO)
+        crop_right = int(char_width * CROP_RIGHT_RATIO)
+        crop_top = int(char_height * CROP_TOP_RATIO)
+        crop_bottom = int(char_height * CROP_BOTTOM_RATIO)
         
         # 执行裁剪
         char_img_cropped = char_img.crop((crop_left, crop_top, crop_right, crop_bottom))
@@ -1866,7 +1890,7 @@ def handle_message():
                 # 有盲盒会话但输入无效，提示用户
                 session = get_box_session(user_id)
                 remaining = len(session["boxes"]) - len(session["opened"])
-                reply = f"你还有{remaining}个盲盒未开！请输入要开的盲盒编号（如1、选择1）或「全部开」"
+                reply = f"你还有{remaining}个未开！请输入要开的编号（如1、选择1）或「全部开」"
                 if group_id and user_id:
                     reply = f"[CQ:at,qq={user_id}] {reply}"
                 send_message(reply, user_id, group_id)
@@ -2081,7 +2105,7 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
             f"累计3星: {total_3stars}\n"
             f"距离FES保底: {remaining_pity}抽\n"
         )
-        prompt_text = f"{fes_pity_text}{info_text}\n盲盒已生成！请输入要开的盲盒编号：\n{hint_text}\n输入「全部开」一键开启所有盲盒"
+        prompt_text = f"{fes_pity_text}{info_text}\n请输入要开的编号：\n{hint_text}\n输入「全部开」一键开启"
 
         # 发送消息（文字和图片合成一条消息
         if group_id and user_id:
@@ -2274,7 +2298,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         indices = [i for i in indices if i not in opened]
         
         if not indices:
-            reply = "这些盲盒都已经开过了！"
+            reply = "这些都已经开过了！"
             if group_id and user_id:
                 reply = f"[CQ:at,qq={user_id}] {reply}"
             send_message(reply, user_id, group_id)
@@ -2433,14 +2457,14 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         # 检查是否全部开完
         remaining = len(boxes) - len(all_opened)
         if remaining > 0:
-            remaining_hint = f"\n还有{remaining}个盲盒未开，输入「剩下的全部开」可以一键开启"
+            remaining_hint = f"\n还有{remaining}个未开，输入「剩下的全部开」可以一键开启"
             box_hints = [f"选择{i+1}" for i in range(len(boxes)) if i not in all_opened]
             hint = " | ".join(box_hints[:5])
             if len(box_hints) > 5:
                 hint += "\n" + " | ".join(box_hints[5:])
             remaining_hint += f"\n{hint}"
         else:
-            remaining_hint = "\n所有盲盒已开完！"
+            remaining_hint = "\n所有已开完！"
             # 延迟清除会话，给用户时间查看详细信息
             # 不在此处清除，让详细信息查询可以访问
 
@@ -2449,7 +2473,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         fes_text = "\n".join(fes_messages) if fes_messages else ""
         
         # 合成消息（不显示详细文字信息，只显示图片和简短提示）
-        short_text = f"开了{len(new_opened)}个盲盒！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看抽卡详情"
+        short_text = f"开了{len(new_opened)}个！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看抽卡详情"
 
         # 合成一条消息发送
         if img_path:
@@ -2618,7 +2642,7 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
         info_text = (
             f"📊 个人记录\n"
             f"当前呱太: {current_gacha}\n"
-            f"累计抽卡: {total_draws}\n"
+            f"累计次数: {total_draws}\n"
             f"累计3星: {total_3stars}\n"
             f"🔴 红色碎片: {red_crystal}\n"
             f"🔵 蓝色碎片: {blue_crystal}\n"
@@ -2827,13 +2851,13 @@ def handle_show_details(user_id: str, group_id):
         result_text = "\n".join(result_lines)
 
         # 构建消息
-        msg_parts = ["📋 抽卡详细信息"]
+        msg_parts = ["详细信息"]
         if mutations:
             msg_parts.append("\n".join(mutations))
         # 添加FES提示消息
         if fes_messages:
             msg_parts.append("\n".join(fes_messages))
-        msg_parts.append(f"\n抽卡结果:\n{result_text}")
+        msg_parts.append(f"\n结果:\n{result_text}")
         
         if red_crystal > 0 or blue_crystal > 0:
             crystal_parts = []
@@ -2897,7 +2921,7 @@ def handle_leaderboard(user_id: str, group_id):
             
             msg_lines.append(
                 f"{emoji} {player['user_id']} {power_info}\n"
-                f"   累计抽卡: {player['total_draws']} | 累计3星: {player['total_3stars']}"
+                f"   累计: {player['total_draws']} | 累计3星: {player['total_3stars']}"
             )
         
         
@@ -3020,8 +3044,8 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
 ║ 🔴 红色碎片: {red_crystal // THREE_STAR_POOL_RED_COST}次          ║
 ║ 🔵 蓝色碎片: {blue_crystal // THREE_STAR_POOL_BLUE_COST}次          ║
 ╠══════════════════════════════╣
-║ 输入「三星池子红抽」使用红色碎片抽卡    ║
-║ 输入「三星池子蓝抽」使用蓝色碎片抽卡    ║
+║ 输入「三星池子红抽」使用红色碎片抽    ║
+║ 输入「三星池子蓝抽」使用蓝色碎片抽    ║
 ╚══════════════════════════════╝
 """
             if group_id and user_id:
@@ -3069,7 +3093,7 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
             remaining = current - cost
             # 如果有FES提示，添加到消息中
             fes_text = f"\n{fes_message}" if fes_message else ""
-            full_message = f"{at_message}💎 使用{cost}个{crystal_name}抽卡！{fes_text}\n{img_message}\n剩余{crystal_name}: {remaining}个"
+            full_message = f"{at_message}💎 使用{cost}个{crystal_name}！{fes_text}\n{img_message}\n剩余{crystal_name}: {remaining}个"
             send_message(full_message, user_id, group_id)
             
             if os.path.exists(img_path):
@@ -3077,12 +3101,12 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
         else:
             # 如果没有图片，发送文字消息
             fes_text = f"\n{fes_message}" if fes_message else ""
-            reply = f"💎 使用{cost}个{crystal_name}抽卡！\n{result['message']}{fes_text}\n剩余{crystal_name}: {current - cost}个"
+            reply = f"💎 使用{cost}个{crystal_name}！\n{result['message']}{fes_text}\n剩余{crystal_name}: {current - cost}个"
             if group_id and user_id:
                 reply = f"[CQ:at,qq={user_id}] {reply}"
             send_message(reply, user_id, group_id)
         
-        log_info(f"三星池子抽卡 [{user_id}]: type={crystal_type}, card={selected.get('name')}")
+        log_info(f"三星only池 [{user_id}]: type={crystal_type}, card={selected.get('name')}")
         
         return jsonify({
             "status": "success",
@@ -3091,7 +3115,7 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
         })
     
     except Exception as e:
-        log_error(f"三星池子抽卡失败: {e}")
+        log_error(f"三星池失败: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -3137,7 +3161,7 @@ def handle_team(user_id: str, group_id, raw_message: str):
             img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 10)
             
             if not current_cards:
-                reply = "你还没有三星卡！快去抽卡吧~"
+                reply = "你还没有三星卡~"
                 if group_id and user_id:
                     reply = f"[CQ:at,qq={user_id}] {reply}"
                 send_message(reply, user_id, group_id)
@@ -3334,30 +3358,26 @@ def handle_help(user_id: str, group_id):
     """返回帮助信息"""
     help_text = f"""
 ╔══════════════════════════════╗
-║     自动抽卡Bot 帮助      ║
+║     ifBot 帮助      ║
 ╠══════════════════════════════╣
-║ 单抽  - 抽取一张卡牌({GACHA_COST}呱太) ║
-║ 十连  - 抽取十张卡牌({GACHA10_COST}呱太) ║
+║ 单抽  - ({GACHA_COST}呱太) ║
+║ 十连  - ({GACHA10_COST}呱太) ║
 ║ 十抽跳过 - 十连直接出结果    ║
 ║ 获取呱太 - 获得{GET_GACHA_REWARD}呱太   ║
 ║ 签到  - 每日签到({DAILY_REWARD}呱太)  ║
-║ 个人记录 - 查看个人抽卡统计    ║
+║ 个人记录 - 查看个人统计    ║
 ║ 兑换呱太 - 用碎片兑换呱太      ║
 ║ 排行榜 - 查看战力排行榜        ║
-║ 三星池子 - 查看三星池子介绍    ║
+║ 三星only - 查看三星池介绍    ║
 ║ 队伍  - 查看当前队伍        ║
 ║ 帮助  - 显示此帮助         ║
-╠══════════════════════════════╣
-║ 保底机制: 150抽必出FES限定   ║
-║ 十连保底: 必出至少1个2星     ║
-╠══════════════════════════════╣
-║ 三星池子:                   ║
+╠══════════════════════════════╣                   ║
 ║ 三星池子 - 查看池子介绍      ║
-║ 红抽 - 消耗1500红色碎片抽卡  ║
-║ 蓝抽 - 消耗350蓝色碎片抽卡  ║
+║ 三星池子红抽 - 消耗1500红色碎片  ║
+║ 三星池子蓝抽 - 消耗350蓝色碎片  ║
 ╠══════════════════════════════╣
 ║ 配队命令:                    ║
-║ 队伍 我的卡 - 查看三星卡(翻页)║
+║ 队伍 我的卡 - 查看三星(翻页)║
 ║ 队伍 设置 位置 序号(1-10)   ║
 ║ 队伍 清除 位置             ║
 ║ 队伍 清空 - 清空队伍       ║
@@ -3387,9 +3407,6 @@ def handle_cute_reply(user_id: str, group_id):
         "好耶！终于被注意到了~ 🎉",
         "哇~ 有人艾特我！开心~ 😄",
         "喵星人收到信号！📡",
-        "你好呀你好呀~ 我是抽卡小助手！🃏",
-        "要一起抽卡吗？说不定能抽到SS哦！⭐",
-        "今天的运气一定很棒！要不要试试抽卡？🎲"
     ]
     
     # 随机选择一个卖萌回复
