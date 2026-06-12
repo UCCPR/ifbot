@@ -28,7 +28,8 @@ try:
         set_team_card,
         clear_team_card,
         clear_all_team,
-        get_team_info
+        get_team_info,
+        auto_build_team
     )
     TEAM_SYSTEM_LOADED = True
 except ImportError as e:
@@ -38,7 +39,8 @@ except ImportError as e:
     def save_team_data(user_id, data): pass
     def get_user_3star_cards(user_id, characters=None): return []
     def build_team_image(team_data, characters): return None
-    def build_3star_cards_image(user_id, characters, page=1, page_size=10): return None, [], 0
+    def build_3star_cards_image(user_id, characters, page=1, page_size=50): return None, [], 0
+    def auto_build_team(user_id, characters): return {"success": False, "message": "配队系统未加载", "team": None}
     def set_team_card(user_id, position, card_id, card_type="battle"): return False
     def clear_team_card(user_id, position, card_type="battle"): return False
     def clear_all_team(user_id): pass
@@ -2436,7 +2438,7 @@ def handle_message():
         elif '兑换呱太' in raw_message or '兑换' in raw_message.lower():
             return handle_exchange_crystal(user_id, group_id)
         elif '排行榜' in raw_message or '排行' in raw_message.lower():
-            return handle_leaderboard(user_id, group_id)
+            return show_ranking(user_id, group_id)
         elif '详细信息' in raw_message:
             return handle_show_details(user_id, group_id)
         elif '战斗日志' in raw_message:
@@ -2445,6 +2447,19 @@ def handle_message():
             return handle_sannoujo(user_id, group_id)
         elif '三星池子' in raw_message or '红抽' in raw_message or '蓝抽' in raw_message:
             return handle_3star_pool(user_id, group_id, raw_message)
+        elif '挑战' in raw_message:
+            # 解析挑战排名
+            import re
+            rank_match = re.search(r'挑战\s*(\d+)', raw_message)
+            if rank_match:
+                target_rank = int(rank_match.group(1))
+                return challenge_rank(user_id, group_id, target_rank)
+            else:
+                reply = "请指定挑战的排名！格式：挑战 1~10"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "未指定排名"})
         elif '战斗' in raw_message or '对战' in raw_message or '决斗' in raw_message:
             return handle_battle(user_id, group_id, raw_message)
         
@@ -3644,7 +3659,9 @@ def handle_battle(user_id: str, group_id, raw_message: str):
     命令格式:
     - 战斗 - 开始与AI对战
     - 战斗 @玩家QQ - 与指定玩家对战
-    - 战斗帮助 - 显示战斗帮助
+    - 对战说明 - 显示战斗帮助
+    - 排行榜 - 查看排行榜
+    - 挑战 排名 - 挑战排行榜上的指定玩家
     """
     try:
         # 检查战斗系统是否加载
@@ -3655,8 +3672,8 @@ def handle_battle(user_id: str, group_id, raw_message: str):
             send_message(reply, user_id, group_id)
             return jsonify({"status": "error", "message": "战斗系统未加载"})
         
-        # 检查是否是帮助命令
-        if '帮助' in raw_message:
+        # 检查是否是帮助命令（改为"对战说明"）
+        if '说明' in raw_message:
             reply = get_battle_help()
             if group_id and user_id:
                 reply = f"[CQ:at,qq={user_id}]\n{reply}"
@@ -3685,7 +3702,7 @@ def handle_battle(user_id: str, group_id, raw_message: str):
         player_has_cards = any(card for card in player_battle_cards)
         
         if not player_has_cards:
-            reply = "你的队伍还没有配置战斗卡！请先使用「队伍」命令配置队伍。"
+            reply = "你的队伍还没有配置战斗卡！请先使用「队伍我的卡」命令配置队伍。"
             if group_id and user_id:
                 reply = f"[CQ:at,qq={user_id}] {reply}"
             send_message(reply, user_id, group_id)
@@ -3817,6 +3834,349 @@ def generate_ai_team() -> dict:
         "assist_cards": assist_cards
     }
 
+def get_user_team(user_id: str) -> dict:
+    """获取用户的队伍配置（封装team_system的load_team_data）"""
+    try:
+        from team_system import load_team_data
+        return load_team_data(user_id)
+    except Exception as e:
+        log_error(f"获取用户队伍失败: {e}")
+        return {"battle_cards": [], "assist_cards": []}
+
+
+# ========== 排行榜系统 ==========
+RANKING_FILE = INFO_DIR / "ranking.json"
+
+def init_ranking():
+    """初始化排行榜（如果文件不存在）"""
+    if not RANKING_FILE.exists():
+        # 初始排行榜：10个AI队伍
+        ranking = []
+        for i in range(10):
+            ai_team = generate_ai_team()
+            # 设置一个不满编的队伍（前几个位置为空）
+            empty_positions = i // 3  # 越靠前的AI队伍越完整
+            for pos in range(empty_positions):
+                if pos < len(ai_team["battle_cards"]):
+                    ai_team["battle_cards"][pos] = None
+                if pos < len(ai_team["assist_cards"]):
+                    ai_team["assist_cards"][pos] = None
+            
+            ranking.append({
+                "rank": i + 1,
+                "is_ai": True,
+                "user_id": f"AI_{i + 1}",
+                "nickname": f"AI队伍{i + 1}",
+                "team": ai_team,
+                "wins": 0,
+                "losses": 0
+            })
+        
+        with open(RANKING_FILE, "w", encoding="utf-8") as f:
+            json.dump(ranking, f, ensure_ascii=False, indent=2)
+
+def load_ranking():
+    """加载排行榜数据"""
+    init_ranking()
+    with open(RANKING_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_ranking(ranking):
+    """保存排行榜数据"""
+    with open(RANKING_FILE, "w", encoding="utf-8") as f:
+        json.dump(ranking, f, ensure_ascii=False, indent=2)
+
+def get_player_ranking(user_id: str):
+    """获取玩家的排名（如果不在排行榜中返回11）"""
+    ranking = load_ranking()
+    for entry in ranking:
+        if not entry["is_ai"] and entry["user_id"] == user_id:
+            return entry["rank"]
+    return 11
+
+def get_player_entry(user_id: str):
+    """获取玩家的排行榜entry（如果不在排行榜中返回None）"""
+    ranking = load_ranking()
+    for entry in ranking:
+        if not entry["is_ai"] and entry["user_id"] == user_id:
+            return entry
+    return None
+
+def add_player_to_ranking(user_id: str, nickname: str, team: dict, rank: int):
+    """将玩家添加到排行榜"""
+    ranking = load_ranking()
+    
+    # 检查是否已存在
+    for entry in ranking:
+        if not entry["is_ai"] and entry["user_id"] == user_id:
+            return entry
+    
+    # 添加新玩家
+    new_entry = {
+        "rank": rank,
+        "is_ai": False,
+        "user_id": user_id,
+        "nickname": nickname,
+        "team": team,
+        "wins": 0,
+        "losses": 0
+    }
+    ranking.append(new_entry)
+    
+    # 重新排序并调整排名
+    ranking.sort(key=lambda x: x["rank"])
+    for i, entry in enumerate(ranking[:10], 1):
+        entry["rank"] = i
+    
+    # 将超出前10的玩家排名设为11
+    for entry in ranking[10:]:
+        if not entry["is_ai"]:
+            entry["rank"] = 11
+    
+    save_ranking(ranking)
+    return new_entry
+
+def update_ranking_after_battle(winner_id: str, loser_id: str, is_winner_ai: bool, is_loser_ai: bool, winner_team: dict = None, winner_nickname: str = None):
+    """战斗结束后更新排行榜"""
+    ranking = load_ranking()
+    
+    # 找到获胜者和失败者
+    winner_entry = None
+    loser_entry = None
+    
+    for entry in ranking:
+        if entry["is_ai"] and is_winner_ai and entry["user_id"] == winner_id:
+            winner_entry = entry
+        elif not entry["is_ai"] and not is_winner_ai and entry["user_id"] == winner_id:
+            winner_entry = entry
+        
+        if entry["is_ai"] and is_loser_ai and entry["user_id"] == loser_id:
+            loser_entry = entry
+        elif not entry["is_ai"] and not is_loser_ai and entry["user_id"] == loser_id:
+            loser_entry = entry
+    
+    # 如果玩家首次进入排行榜（winner_entry为None）
+    if not is_winner_ai and winner_entry is None and loser_entry is not None:
+        # 添加玩家到排行榜
+        winner_entry = add_player_to_ranking(winner_id, winner_nickname or f"玩家{winner_id[:4]}****", winner_team, loser_entry["rank"])
+        ranking = load_ranking()  # 重新加载
+    
+    if winner_entry and loser_entry:
+        # 增加胜负记录
+        winner_entry["wins"] += 1
+        loser_entry["losses"] += 1
+        
+        # 如果玩家击败了AI或排名更高的玩家，交换位置
+        if winner_entry["rank"] > loser_entry["rank"]:
+            # 交换排名
+            winner_entry["rank"], loser_entry["rank"] = loser_entry["rank"], winner_entry["rank"]
+            
+            # 重新排序
+            ranking.sort(key=lambda x: x["rank"])
+            
+            # 调整排名序号
+            for i, entry in enumerate(ranking[:10], 1):
+                entry["rank"] = i
+            
+            # 将超出前10的设为11
+            for entry in ranking[10:]:
+                if not entry["is_ai"]:
+                    entry["rank"] = 11
+    
+    save_ranking(ranking)
+
+def show_ranking(user_id: str, group_id):
+    """显示排行榜"""
+    ranking = load_ranking()
+    
+    lines = ["🏆 排行榜 TOP 10 🏆"]
+    for i, entry in enumerate(ranking[:10], 1):
+        if entry["is_ai"]:
+            lines.append(f"第{i}名: 🤖 {entry['nickname']} (AI)")
+        else:
+            lines.append(f"第{i}名: 👤 {entry['nickname']} (玩家)")
+    
+    player_rank = get_player_ranking(user_id)
+    if player_rank > 10:
+        lines.append(f"\n你的排名: 第{player_rank}名 (未进入前10)")
+        # 显示可挑战的排名范围
+        lines.append(f"可挑战排名: 第8-10名")
+    else:
+        lines.append(f"\n你的排名: 第{player_rank}名")
+        # 显示可挑战的排名范围
+        min_challenge = max(1, player_rank - 3)
+        if min_challenge < player_rank:
+            lines.append(f"可挑战排名: 第{min_challenge}-{player_rank-1}名")
+        else:
+            lines.append("你已是第1名，无法被挑战")
+    
+    reply = "\n".join(lines)
+    if group_id and user_id:
+        reply = f"[CQ:at,qq={user_id}]\n{reply}"
+    send_message(reply, user_id, group_id)
+    
+    return jsonify({"status": "success", "message": "显示排行榜"})
+
+def challenge_rank(user_id: str, group_id, target_rank: int):
+    """挑战指定排名的玩家/AI"""
+    try:
+        log_info(f"开始挑战: user_id={user_id}, target_rank={target_rank}")
+        
+        ranking = load_ranking()
+        log_info(f"排行榜加载完成，共{len(ranking)}个条目")
+        
+        if target_rank < 1 or target_rank > 10:
+            reply = "无效的排名！请挑战1-10名之间的对手"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "无效的排名"})
+        
+        player_rank = get_player_ranking(user_id)
+        log_info(f"玩家排名: {player_rank}")
+        
+        # 检查是否可以挑战
+        if player_rank <= 10:
+            min_challenge_rank = max(1, player_rank - 3)
+            if target_rank < min_challenge_rank or target_rank >= player_rank:
+                reply = f"只能挑战排名比你高且不超过3位的对手！\n你的排名: 第{player_rank}名\n可挑战排名: 第{min_challenge_rank}-{player_rank-1}名"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "无法挑战该排名"})
+        else:
+            if target_rank < 8:
+                reply = f"你还未进入排行榜，只能挑战第8-10名！\n你的排名: 第{player_rank}名"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "无法挑战该排名"})
+        
+        target_entry = None
+        for entry in ranking:
+            if entry["rank"] == target_rank:
+                target_entry = entry
+                break
+        
+        if not target_entry:
+            reply = "未找到该排名的对手！"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "未找到对手"})
+        
+        log_info(f"目标对手: {target_entry['nickname']}, is_ai={target_entry['is_ai']}")
+        
+        # 获取玩家队伍
+        player_team_data = get_user_team(user_id)
+        log_info(f"玩家队伍数据类型: {type(player_team_data)}")
+        
+        if player_team_data:
+            log_info(f"玩家队伍 battle_cards: {player_team_data.get('battle_cards')}")
+        
+        if not player_team_data or not player_team_data.get("battle_cards"):
+            reply = "请先配置队伍！使用【队伍】命令"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "未配置队伍"})
+        
+        # 检查敌方队伍
+        enemy_team = target_entry["team"]
+        log_info(f"敌方队伍类型: {type(enemy_team)}")
+        if enemy_team:
+            log_info(f"敌方队伍 battle_cards: {enemy_team.get('battle_cards')}")
+        
+        # 开始战斗
+        enemy_name = target_entry["nickname"]
+        
+        # 生成并发送敌方配队图片
+        try:
+            characters = get_characters()
+            enemy_team_img = build_team_image(enemy_team, characters)
+            if enemy_team_img:
+                # 发送图片
+                send_image(enemy_team_img, user_id, group_id)
+            else:
+                # 如果无法生成图片，显示文字信息
+                enemy_battle_cards = enemy_team.get("battle_cards", [])
+                enemy_assist_cards = enemy_team.get("assist_cards", [])
+                characters = get_characters()
+                char_dict = {c["card_id"]: c for c in characters}
+                
+                enemy_team_display = f"👥 {enemy_name} 的队伍:\n"
+                for i in range(6):
+                    battle_name = "空"
+                    assist_name = "空"
+                    
+                    if i < len(enemy_battle_cards) and enemy_battle_cards[i]:
+                        card_info = char_dict.get(str(enemy_battle_cards[i]))
+                        if card_info:
+                            battle_name = card_info.get("name", str(enemy_battle_cards[i]))
+                        else:
+                            battle_name = str(enemy_battle_cards[i])
+                    
+                    if i < len(enemy_assist_cards) and enemy_assist_cards[i]:
+                        card_info = char_dict.get(str(enemy_assist_cards[i]))
+                        if card_info:
+                            assist_name = card_info.get("name", str(enemy_assist_cards[i]))
+                        else:
+                            assist_name = str(enemy_assist_cards[i])
+                    
+                    enemy_team_display += f" 位置{i+1}: {battle_name} + {assist_name}\n"
+                
+                send_message(enemy_team_display.strip(), user_id, group_id)
+        except Exception as e:
+            log_error(f"生成敌方配队图片失败: {e}")
+        
+        reply = f"⚔️ 正在挑战 {enemy_name}（排名第{target_rank}）..."
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+        
+        # 执行战斗
+        log_info("开始执行战斗...")
+        result = BATTLE_INSTANCE.start_battle(player_team_data, enemy_team)
+        log_info(f"战斗结果: {result}")
+        
+        winner = result["winner"]
+        # 将user_id转换为字符串再切片
+        user_id_str = str(user_id)
+        player_nickname = f"玩家{user_id_str[:4]}****"
+        
+        if winner == "player":
+            update_ranking_after_battle(user_id, target_entry["user_id"], False, target_entry["is_ai"], player_team_data, player_nickname)
+        else:
+            update_ranking_after_battle(target_entry["user_id"], user_id, target_entry["is_ai"], False)
+        
+        rounds = result["rounds"]
+        if winner == "player":
+            new_rank = get_player_ranking(user_id)
+            result_text = f"🏆 胜利！你击败了 {enemy_name}！\n🎉 你的新排名: 第{new_rank}名"
+        else:
+            result_text = f"💀 失败... 你被 {enemy_name} 击败了..."
+        
+        player_alive = sum(1 for u in result["player_units"] if u["alive"] and not u["is_assist"])
+        enemy_alive = sum(1 for u in result["enemy_units"] if u["alive"] and not u["is_assist"])
+        result_text += f"\n📊 最终状态: 我方存活 {player_alive}/6, 敌方存活 {enemy_alive}/6"
+        
+        send_message(result_text, user_id, group_id)
+        # 提示用户可以查看战斗日志
+        send_message("📝 输入「战斗日志」查看详细战斗记录", user_id, group_id)
+        
+        show_ranking(user_id, group_id)
+        
+        return jsonify({"status": "success", "message": "挑战完成", "winner": winner})
+        
+    except Exception as e:
+        import traceback
+        log_error(f"挑战失败: {e}\n{traceback.format_exc()}")
+        reply = f"挑战失败: {str(e)}"
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+        return jsonify({"status": "error", "message": f"挑战失败: {str(e)}"})
+
 
 def handle_battle_log(user_id: str, group_id):
     """显示最近一场战斗的详细日志"""
@@ -3879,12 +4239,13 @@ def handle_team(user_id: str, group_id, raw_message: str):
         
         # 解析命令
         # 队伍 - 显示当前队伍（只显示图片）
-        # 队伍 我的卡 - 显示三星卡图（10张，可翻页，无文字卡名）
+        # 队伍 我的卡 - 显示三星卡图（50张，可翻页，无文字卡名）
         # 队伍 我的卡 下一页/上一页 - 翻页查看三星卡
-        # 队伍 设置 位置 序号(1-10) - 根据当前页序号设置卡牌
+        # 队伍 设置 位置 序号(1-50) - 根据当前页序号设置卡牌
         # 队伍 设置 战斗位/支援位 位置 序号 - 手动指定类型
         # 队伍 清除 位置 - 清除该位置的战斗卡和支援卡
         # 队伍 清空 - 清空所有队伍配置
+        # 队伍 自动配队 - AI自动配队（B+A同色同攻击类型，FES优先）
         
         # 获取用户当前查看的页码（从session或默认第1页）
         team_session_file = INFO_DIR / f"team_session_{user_id}.json"
@@ -3897,21 +4258,58 @@ def handle_team(user_id: str, group_id, raw_message: str):
             except:
                 current_page = 1
         
+        # 自动配队命令
+        if '自动配队' in raw_message or '自动' in raw_message:
+            result = auto_build_team(user_id, characters)
+            reply = result["message"]
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            
+            # 显示配队后的队伍图片
+            if result["success"]:
+                team_data = load_team_data(user_id)
+                img_path = build_team_image(team_data, characters)
+                if img_path and os.path.exists(img_path):
+                    with open(img_path, "rb") as f:
+                        image_base64 = base64.b64encode(f.read()).decode("utf-8")
+                    img_message = f"[CQ:image,file=base64://{image_base64}]"
+                    send_message(img_message, user_id, group_id)
+                    if os.path.exists(img_path):
+                        os.remove(img_path)
+            
+            return jsonify({"status": "success", "message": result["message"]})
+        
         if '我的卡' in raw_message:
+            # 先获取总页数（用于验证页码）
+            user_cards = get_user_3star_cards(user_id, characters)
+            total_pages = max(1, (len(user_cards) + 50 - 1) // 50)
+            
             # 处理翻页
-            if '下一页' in raw_message:
+            import re
+            # 检查是否跳转到指定页码（如"队伍 我的卡 第3页"或"队伍 我的卡 3"）
+            page_match = re.search(r'我的卡\s+(第)?(\d+)(页)?', raw_message)
+            if page_match:
+                target_page = int(page_match.group(2))
+                current_page = max(1, min(target_page, total_pages))
+            elif '下一页' in raw_message:
                 current_page += 1
+                if current_page > total_pages:
+                    current_page = total_pages
             elif '上一页' in raw_message:
                 current_page -= 1
                 if current_page < 1:
                     current_page = 1
             
+            # 确保页码在有效范围内
+            current_page = max(1, min(current_page, total_pages))
+            
             # 保存当前页码
             with open(team_session_file, "w", encoding="utf-8") as f:
                 json.dump({"cards_page": current_page}, f)
             
-            # 显示用户拥有的三星卡（只显示图片，无文字卡名）
-            img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 10)
+            # 显示用户拥有的三星卡（50张一页，只显示图片，无文字卡名）
+            img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 50)
             
             if not current_cards:
                 reply = "你还没有三星卡~"
@@ -3927,9 +4325,12 @@ def handle_team(user_id: str, group_id, raw_message: str):
                     page_info += " | 输入「队伍 我的卡 下一页」查看下一页"
                 if current_page > 1:
                     page_info += " | 输入「队伍 我的卡 上一页」查看上一页"
+                # 添加跳转到指定页码的提示
+                page_info += " | 输入「队伍 我的卡 页码」跳转到指定页"
             
-            # 使用提示
-            usage_hint = "使用「队伍 设置 位置 序号(1-10)」将卡牌加入队伍"
+            # 使用提示（根据当前页实际卡牌数量）
+            current_page_size = len(current_cards)
+            usage_hint = f"使用「队伍 设置 位置 序号(1-{current_page_size})」将卡牌加入队伍"
             
             if img_path and os.path.exists(img_path):
                 with open(img_path, "rb") as f:
@@ -3958,7 +4359,7 @@ def handle_team(user_id: str, group_id, raw_message: str):
         elif '设置' in raw_message:
             # 设置队伍卡牌
             import re
-            # 匹配格式1: 队伍 设置 位置 序号（使用当前页的序号1-10）
+            # 匹配格式1: 队伍 设置 位置 序号（使用当前页的序号1-50）
             match_simple = re.search(r'设置\s+(\d+)\s+(\d+)', raw_message)
             # 匹配格式2: 队伍 设置 战斗位/支援位 位置 序号
             match_full = re.search(r'设置\s+(战斗位|支援位)\s+(\d+)\s+(\d+)', raw_message)
@@ -3966,17 +4367,17 @@ def handle_team(user_id: str, group_id, raw_message: str):
             if match_simple and not match_full:
                 # 简化格式：使用序号选择卡牌
                 position = int(match_simple.group(1))
-                card_index = int(match_simple.group(2))  # 序号1-10
+                card_index = int(match_simple.group(2))  # 序号1-50
                 
                 if position < 1 or position > 6:
                     reply = "队伍位置必须在1-6之间！"
-                elif card_index < 1 or card_index > 10:
-                    reply = "序号必须在1-10之间！"
                 else:
                     # 获取当前页的卡牌列表
-                    img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 10)
+                    img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 50)
                     
-                    if card_index > len(current_cards):
+                    if card_index < 1:
+                        reply = "序号必须大于0！"
+                    elif card_index > len(current_cards):
                         reply = f"当前页只有{len(current_cards)}张卡，序号{card_index}无效！"
                     else:
                         card_info = current_cards[card_index - 1]
@@ -4120,17 +4521,16 @@ def handle_help(user_id: str, group_id):
 ║ 个人记录 - 查看个人统计    ║
 ║ 兑换呱太 - 用碎片兑换呱太      ║
 ║ 排行榜 - 查看战力排行榜        ║
-║ 三星only - 查看三星池介绍    ║
+║ 三星池子 - 查看三星only池介绍    ║
 ║ 队伍  - 查看当前队伍        ║
 ║ 帮助  - 显示此帮助         ║
 ╠══════════════════════════════╣                   ║
-║ 三星池子 - 查看池子介绍      ║
-║ 三星池子红抽 - 消耗1500红色碎片  ║
-║ 三星池子蓝抽 - 消耗350蓝色碎片  ║
+║ 战斗 @  - 与某个玩家战斗  ║
+║ 战斗  - 与随机AI战斗  ║
 ╠══════════════════════════════╣
-║ 配队命令:                    ║
-║ 队伍 我的卡 - 查看三星(翻页)║
-║ 队伍 设置 位置 序号(1-10)   ║
+║ 配队命令:                      ║
+║ 队伍 我的卡 - 用于配队          ║
+║ 队伍 设置 位置 序号   ║
 ║ 队伍 清除 位置             ║
 ║ 队伍 清空 - 清空队伍       ║
 ╚══════════════════════════════╝
