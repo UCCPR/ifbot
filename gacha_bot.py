@@ -44,6 +44,19 @@ except ImportError as e:
     def clear_all_team(user_id): pass
     def get_team_info(user_id, characters): return "配队系统未加载"
 
+# 导入战斗系统
+try:
+    from battle_system import BattleSystem, format_battle_result, get_battle_help
+    BATTLE_SYSTEM_LOADED = True
+    BATTLE_INSTANCE = None  # 战斗系统实例
+except ImportError as e:
+    BATTLE_SYSTEM_LOADED = False
+    class BattleSystem:
+        def __init__(self, data): pass
+        def start_battle(self, p_team, e_team): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
+    def format_battle_result(result): return "战斗系统未加载"
+    def get_battle_help(): return "战斗系统未加载"
+
 
 # ========== 配置 ==========
 BASE_DIR = Path(__file__).parent
@@ -175,6 +188,7 @@ CHARACTERS_CACHE = None  # 预加载的角色数据缓存
 BOX_SESSIONS = {}  # 盲盒会话状态 {user_id: {"boxes": [], "opened": [], "created_at": timestamp}}
 MESSAGE_COUNTER = {}  # 消息发送计数器 {target_id: {"count": int, "start_time": timestamp}}
 MAX_MESSAGES_PER_MINUTE = 30  # 每分钟最大消息发送量
+DAILY_SEND_STATS = {}  # 每日发送消息统计 {日期: 发送次数}
 
 
 # ========== 预加载模块 ==========
@@ -1153,13 +1167,14 @@ def is_valid_box_index(boxes: list, index_str: str, opened_indices: list = None)
 
 
 # ========== 日活统计模块 ==========
-def parse_log_file(log_path: str) -> dict:
+def parse_log_file(log_path: str) -> tuple:
     """
-    解析日志文件，提取每天的活跃用户
+    解析日志文件，提取每天的活跃用户和发送次数
     :param log_path: 日志文件路径
-    :return: {日期: {用户ID集合}}
+    :return: (daily_users, daily_sends) - daily_users: {日期: {用户ID集合}}, daily_sends: {日期: 发送次数}
     """
     daily_users = {}
+    daily_sends = {}
     
     try:
         with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -1172,6 +1187,12 @@ def parse_log_file(log_path: str) -> dict:
                     date_end = line.find(' ', date_start)
                     if date_start > 0 and date_end > date_start:
                         date_str = line[date_start:date_end]
+                        
+                        # 统计发送次数（查找"消息发送成功"的日志）
+                        if "消息发送成功" in line:
+                            if date_str not in daily_sends:
+                                daily_sends[date_str] = 0
+                            daily_sends[date_str] += 1
                         
                         # 提取user_id
                         user_id_start = line.find('"user_id":')
@@ -1191,14 +1212,14 @@ def parse_log_file(log_path: str) -> dict:
     except Exception as e:
         log_error(f"解析日志文件失败: {log_path}, 错误: {e}")
     
-    return daily_users
+    return daily_users, daily_sends
 
 
-def calculate_dau_from_date(start_date_str: str = "2026-06-08") -> dict:
+def calculate_dau_from_date(start_date_str: str = "2026-06-08") -> tuple:
     """
-    计算从指定日期到今天的日活数据
+    计算从指定日期到今天的日活数据和发送次数
     :param start_date_str: 开始日期（格式: YYYY-MM-DD）
-    :return: {日期: 日活数}
+    :return: (dau_data, send_data) - dau_data: {日期: 日活数}, send_data: {日期: 发送次数}
     """
     # 获取两个日志文件的数据
     log_files = [
@@ -1208,35 +1229,75 @@ def calculate_dau_from_date(start_date_str: str = "2026-06-08") -> dict:
     
     # 合并所有日志数据
     all_daily_users = {}
+    all_daily_sends = {}
     
     for log_file in log_files:
         if log_file.exists():
-            daily_users = parse_log_file(str(log_file))
+            daily_users, daily_sends = parse_log_file(str(log_file))
+            
+            # 合并用户数据
             for date_str, users in daily_users.items():
                 if date_str not in all_daily_users:
                     all_daily_users[date_str] = set()
                 all_daily_users[date_str].update(users)
+            
+            # 合并发送次数（累加）
+            for date_str, sends in daily_sends.items():
+                if date_str not in all_daily_sends:
+                    all_daily_sends[date_str] = 0
+                all_daily_sends[date_str] += sends
     
     # 过滤从start_date到今天的数据
-    result = {}
+    dau_result = {}
+    send_result = {}
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
     today = datetime.now().date()
     
-    for date_str in sorted(all_daily_users.keys()):
+    # 获取所有日期
+    all_dates = set(all_daily_users.keys()) | set(all_daily_sends.keys())
+    
+    for date_str in sorted(all_dates):
         try:
             log_date = datetime.strptime(date_str, "%Y-%m-%d").date()
             if start_date <= log_date <= today:
-                result[date_str] = len(all_daily_users[date_str])
+                dau_result[date_str] = len(all_daily_users.get(date_str, set()))
+                send_result[date_str] = all_daily_sends.get(date_str, 0)
         except ValueError:
             continue
     
-    return result
+    return dau_result, send_result
 
 
-def save_dau_log(dau_data: dict):
+def load_send_stats() -> dict:
     """
-    保存日活数据到日志文件
+    加载历史发送统计数据
+    :return: {日期: 发送次数}
+    """
+    send_stats_file = INFO_DIR / "send_stats.json"
+    if send_stats_file.exists():
+        try:
+            with open(send_stats_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def save_send_stats(send_stats: dict):
+    """
+    保存发送统计数据
+    :param send_stats: {日期: 发送次数}
+    """
+    send_stats_file = INFO_DIR / "send_stats.json"
+    with open(send_stats_file, 'w', encoding='utf-8') as f:
+        json.dump(send_stats, f, indent=2, ensure_ascii=False)
+
+
+def save_dau_log(dau_data: dict, send_data: dict = None):
+    """
+    保存日活数据和发送次数到日志文件
     :param dau_data: {日期: 日活数}
+    :param send_data: {日期: 发送次数}
     """
     dau_file = INFO_DIR / "dau_log.json"
     
@@ -1249,8 +1310,36 @@ def save_dau_log(dau_data: dict):
         except:
             pass
     
-    # 合并数据（新数据覆盖旧数据）
-    existing_data.update(dau_data)
+    # 迁移旧格式数据（旧格式是 {日期: 整数}，新格式是 {日期: {"dau": 整数, "send": 整数}}）
+    migrated_data = {}
+    for date_str, value in existing_data.items():
+        if isinstance(value, int):
+            # 旧格式，转换为新格式
+            migrated_data[date_str] = {"dau": value, "send": 0}
+        elif isinstance(value, dict):
+            # 新格式，直接使用
+            migrated_data[date_str] = value.copy()
+        else:
+            # 未知格式，跳过
+            continue
+    existing_data = migrated_data
+    
+    # 更新日活数据
+    for date_str, dau in dau_data.items():
+        if date_str not in existing_data:
+            existing_data[date_str] = {}
+        if not isinstance(existing_data[date_str], dict):
+            existing_data[date_str] = {}
+        existing_data[date_str]['dau'] = dau
+    
+    # 更新发送次数数据
+    if send_data:
+        for date_str, sends in send_data.items():
+            if date_str not in existing_data:
+                existing_data[date_str] = {}
+            if not isinstance(existing_data[date_str], dict):
+                existing_data[date_str] = {}
+            existing_data[date_str]['send'] = sends
     
     # 保存
     with open(dau_file, 'w', encoding='utf-8') as f:
@@ -1261,42 +1350,76 @@ def save_dau_log(dau_data: dict):
 
 def record_daily_dau():
     """
-    记录当日日活并输出从8号至今的统计
+    记录当日日活和发送次数并输出从8号至今的统计
+    发送次数 = 日志文件中"消息发送成功"的次数 + 当前运行时发送的消息次数
     """
-    # 计算从6月8日至今的日活
-    dau_data = calculate_dau_from_date("2026-06-08")
+    # 从日志文件中计算从6月8日至今的日活数据和发送次数
+    dau_data, send_data = calculate_dau_from_date("2026-06-08")
     
-    # 保存到日志
-    save_dau_log(dau_data)
+    # 合并实时发送统计（DAILY_SEND_STATS）到发送次数中
+    for date_str, sends in DAILY_SEND_STATS.items():
+        if date_str not in send_data:
+            send_data[date_str] = 0
+        send_data[date_str] += sends
+    
+    # 保存发送统计
+    save_send_stats(send_data)
+    
+    # 保存到日活日志
+    save_dau_log(dau_data, send_data)
     
     # 生成统计报告
-    report = "\n===== 日活统计报告（从2026-06-08至今）=====\n"
+    report = "\n===== 日活与发送统计报告（从2026-06-08至今）=====\n"
     total_dau = 0
+    total_sends = 0
     max_dau = 0
-    max_date = ""
+    max_dau_date = ""
     min_dau = float('inf')
-    min_date = ""
+    min_dau_date = ""
+    max_sends = 0
+    max_sends_date = ""
+    min_sends = float('inf')
+    min_sends_date = ""
     
-    for date_str in sorted(dau_data.keys()):
-        dau = dau_data[date_str]
-        report += f"{date_str}: {dau} 人\n"
+    # 获取所有日期
+    all_dates = sorted(set(dau_data.keys()) | set(send_data.keys()))
+    
+    for date_str in all_dates:
+        dau = dau_data.get(date_str, 0)
+        sends = send_data.get(date_str, 0)
+        report += f"{date_str}: 日活 {dau} 人, 发送 {sends} 次\n"
+        
         total_dau += dau
+        total_sends += sends
+        
         if dau > max_dau:
             max_dau = dau
-            max_date = date_str
+            max_dau_date = date_str
         if dau < min_dau:
             min_dau = dau
-            min_date = date_str
+            min_dau_date = date_str
+        
+        if sends > max_sends:
+            max_sends = sends
+            max_sends_date = date_str
+        if sends < min_sends:
+            min_sends = sends
+            min_sends_date = date_str
     
-    days = len(dau_data)
+    days = len(all_dates)
     avg_dau = total_dau // days if days > 0 else 0
+    avg_sends = total_sends // days if days > 0 else 0
     
     report += f"\n统计汇总:\n"
     report += f"总天数: {days} 天\n"
     report += f"总活跃用户数: {total_dau} 人次\n"
+    report += f"总发送次数: {total_sends} 次\n"
     report += f"日均活跃: {avg_dau} 人\n"
-    report += f"最高日活: {max_dau} 人 ({max_date})\n"
-    report += f"最低日活: {min_dau} 人 ({min_date})\n"
+    report += f"日均发送: {avg_sends} 次\n"
+    report += f"最高日活: {max_dau} 人 ({max_dau_date})\n"
+    report += f"最低日活: {min_dau} 人 ({min_dau_date})\n"
+    report += f"最高发送: {max_sends} 次 ({max_sends_date})\n"
+    report += f"最低发送: {min_sends} 次 ({min_sends_date})\n"
     
     # 输出到日志和控制台
     log_info(report)
@@ -1431,6 +1554,11 @@ def send_message(message: str, user_id: str = None, group_id: str = None, image_
         
         if result.get("status") == "ok" or result.get("retcode") == 0:
             log_info(f"消息发送成功: {message[:30]}...")
+            # 记录发送次数到每日统计
+            today = datetime.now().strftime("%Y-%m-%d")
+            if today not in DAILY_SEND_STATS:
+                DAILY_SEND_STATS[today] = 0
+            DAILY_SEND_STATS[today] += 1
             return True
         else:
             log_error(f"消息发送失败: {result}")
@@ -1472,12 +1600,131 @@ def send_image(image_path: str, user_id: str = None, group_id: str = None):
 
 # ========== Excel数据读取 ==========
 def load_character_data():
-    """从Excel文件加载角色数据（同时加载BattleCard和AssistCard）"""
+    """从Excel文件加载角色数据（同时加载BattleCard和AssistCard资源及战斗数值）"""
     try:
         # 使用 data_only=True 读取公式的计算结果（需要Excel先保存过）
         wb = openpyxl.load_workbook(XLSX_FILE, data_only=True)
         
         characters = []
+        
+        # 先加载Battle Card和Assist Card的战斗数值数据
+        battle_stats = {}  # card_id -> 战斗数值
+        assist_stats = {}  # card_id -> 战斗数值
+        
+        # 解析攻击方向字符串，返回方向数(1-3)
+        def parse_attack_directions(direction_str):
+            if not direction_str:
+                return 1
+            # 方向字符串如 "←↗" 表示左和右上两个方向
+            # 计算箭头符号的数量
+            arrows = ['←', '↑', '→', '↓', '↖', '↗', '↘', '↙']
+            count = 0
+            for arrow in arrows:
+                if arrow in str(direction_str):
+                    count += 1
+            return max(1, min(3, count))  # 限制在1-3之间
+        
+        # 加载Battle Card战斗数值
+        if 'Battle Card' in wb.sheetnames:
+            sheet = wb['Battle Card']
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2), start=2):
+                try:
+                    card_id = row[0].value
+                    if not card_id:
+                        continue
+                    
+                    # 解析战斗数值
+                    # 列结构: card ID, chara ID, 限定, 初始星级, 方向, 属性, 卡名称, hp_rank1, hp_rank220, 物攻, 异攻, 物防, 异防, 器用, 攻击类型...
+                    direction_str = row[4].value if len(row) > 4 else ""
+                    attack_directions = parse_attack_directions(direction_str)
+                    
+                    # 根据攻击类型选择攻击力
+                    attack_type_str = str(row[14].value) if len(row) > 14 and row[14].value else ""
+                    is_physical = "物理" in attack_type_str
+                    
+                    phys_attack = int(float(row[9].value)) if len(row) > 9 and row[9].value else 0
+                    magic_attack = int(float(row[10].value)) if len(row) > 10 and row[10].value else 0
+                    phys_defense = int(float(row[11].value)) if len(row) > 11 and row[11].value else 0
+                    magic_defense = int(float(row[12].value)) if len(row) > 12 and row[12].value else 0
+                    
+                    attack = phys_attack if is_physical else magic_attack
+                    defense = (phys_defense + magic_defense) // 2  # 取平均防御
+                    
+                    battle_stats[card_id] = {
+                        "hp": int(float(row[8].value)) if len(row) > 8 and row[8].value else 10000,
+                        "attack": attack,
+                        "defense": defense,
+                        "speed": int(float(row[13].value)) if len(row) > 13 and row[13].value else 1000,
+                        "attack_directions": attack_directions,
+                        "attack_type": "物理" if is_physical else "异能",
+                        "attribute": row[5].value if len(row) > 5 else None,
+                        # 技能1信息
+                        "skill1_cd": int(float(row[21].value)) if len(row) > 21 and row[21].value else 0,
+                        "skill1_keywords": str(row[26].value) if len(row) > 26 and row[26].value else "",
+                        "skill1_condition": str(row[27].value) if len(row) > 27 and row[27].value else "",
+                        "skill1_description": str(row[20].value) if len(row) > 20 and row[20].value else "",
+                        # 技能2信息
+                        "skill2_cd": int(float(row[23].value)) if len(row) > 23 and row[23].value else 0,
+                        "skill2_keywords": str(row[28].value) if len(row) > 28 and row[28].value else "",
+                        "skill2_condition": str(row[29].value) if len(row) > 29 and row[29].value else "",
+                        "skill2_description": str(row[22].value) if len(row) > 22 and row[22].value else ""
+                    }
+                except Exception as e:
+                    log_error(f"解析Battle Card行{row_idx}战斗数值失败: {e}")
+                    continue
+            log_info(f"加载了 {len(battle_stats)} 个Battle Card战斗数值")
+        else:
+            log_error("未找到 Battle Card sheet")
+        
+        # 加载Assist Card战斗数值
+        if 'Assist Card' in wb.sheetnames:
+            sheet = wb['Assist Card']
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2), start=2):
+                try:
+                    card_id = row[0].value
+                    if not card_id:
+                        continue
+                    
+                    # 解析战斗数值（结构与Battle Card相同）
+                    direction_str = row[4].value if len(row) > 4 else ""
+                    attack_directions = parse_attack_directions(direction_str)
+                    
+                    attack_type_str = str(row[14].value) if len(row) > 14 and row[14].value else ""
+                    is_physical = "物理" in attack_type_str
+                    
+                    phys_attack = int(float(row[9].value)) if len(row) > 9 and row[9].value else 0
+                    magic_attack = int(float(row[10].value)) if len(row) > 10 and row[10].value else 0
+                    phys_defense = int(float(row[11].value)) if len(row) > 11 and row[11].value else 0
+                    magic_defense = int(float(row[12].value)) if len(row) > 12 and row[12].value else 0
+                    
+                    attack = phys_attack if is_physical else magic_attack
+                    defense = (phys_defense + magic_defense) // 2
+                    
+                    assist_stats[card_id] = {
+                        "hp": int(float(row[8].value)) if len(row) > 8 and row[8].value else 10000,
+                        "attack": attack,
+                        "defense": defense,
+                        "speed": int(float(row[13].value)) if len(row) > 13 and row[13].value else 1000,
+                        "attack_directions": attack_directions,
+                        "attack_type": "物理" if is_physical else "异能",
+                        "attribute": row[5].value if len(row) > 5 else None,
+                        # 技能1信息
+                        "skill1_cd": int(float(row[21].value)) if len(row) > 21 and row[21].value else 0,
+                        "skill1_keywords": str(row[26].value) if len(row) > 26 and row[26].value else "",
+                        "skill1_condition": str(row[27].value) if len(row) > 27 and row[27].value else "",
+                        "skill1_description": str(row[20].value) if len(row) > 20 and row[20].value else "",
+                        # 技能2信息
+                        "skill2_cd": int(float(row[23].value)) if len(row) > 23 and row[23].value else 0,
+                        "skill2_keywords": str(row[28].value) if len(row) > 28 and row[28].value else "",
+                        "skill2_condition": str(row[29].value) if len(row) > 29 and row[29].value else "",
+                        "skill2_description": str(row[22].value) if len(row) > 22 and row[22].value else ""
+                    }
+                except Exception as e:
+                    log_error(f"解析Assist Card行{row_idx}战斗数值失败: {e}")
+                    continue
+            log_info(f"加载了 {len(assist_stats)} 个Assist Card战斗数值")
+        else:
+            log_error("未找到 Assist Card sheet")
         
         # 加载BattleCard资源数据
         if 'BattleCard资源' in wb.sheetnames:
@@ -1493,12 +1740,6 @@ def load_character_data():
                     card_name = row[4].value    # 卡名称
                     card_attribute = row[3].value  # 属性（名字的前一列）
                     limit_type = row[0].value   # 限定种类（期間限定、フェス限定等）
-                    
-                    # 调试：打印原始数据类型
-                    log_info(f"行{row_idx}: card_id={card_id}({type(card_id).__name__}), "
-                             f"chara_id={chara_id}({type(chara_id).__name__}), "
-                             f"stars={init_stars}({type(init_stars).__name__}), "
-                             f"limit_type={limit_type}")
 
                     if not (card_id and chara_id and init_stars and card_name):
                         continue
@@ -1506,15 +1747,39 @@ def load_character_data():
                     # 安全转换为整数
                     stars_val = int(float(str(init_stars)))
                     icon_path = find_character_icon(chara_id, stars_val)
+                    
+                    # 获取战斗数值
+                    stats = battle_stats.get(card_id, {})
+                    
                     characters.append({
                         "card_id": card_id,
                         "chara_id": chara_id,
                         "stars": stars_val,
                         "name": card_name,
-                        "attribute": card_attribute,  # 属性
+                        "attribute": stats.get("attribute") or card_attribute,  # 优先使用Battle Card的属性
                         "limit_type": limit_type,     # 限定种类
                         "icon_path": icon_path,
-                        "type": "battle"  # 标记为战斗卡
+                        "type": "battle",  # 标记为战斗卡
+                        # 战斗数值
+                        "hp": stats.get("hp", 10000),
+                        "attack": stats.get("attack", 5000),
+                        "defense": stats.get("defense", 3000),
+                        "speed": stats.get("speed", 1000),
+                        "attack_directions": stats.get("attack_directions", 1),
+                        "attack_type": stats.get("attack_type", "物理"),
+                        # 技能信息
+                        "skill1": {
+                            "cd": stats.get("skill1_cd", 0),
+                            "keywords": stats.get("skill1_keywords", ""),
+                            "condition": stats.get("skill1_condition", ""),
+                            "description": stats.get("skill1_description", "")
+                        },
+                        "skill2": {
+                            "cd": stats.get("skill2_cd", 0),
+                            "keywords": stats.get("skill2_keywords", ""),
+                            "condition": stats.get("skill2_condition", ""),
+                            "description": stats.get("skill2_description", "")
+                        }
                     })
                 except Exception as row_e:
                     log_error(f"处理行{row_idx}时出错: {row_e}")
@@ -1542,15 +1807,39 @@ def load_character_data():
                     # 安全转换为整数
                     stars_val = int(float(str(init_stars)))
                     icon_path = find_character_icon(chara_id, stars_val)
+                    
+                    # 获取战斗数值
+                    stats = assist_stats.get(card_id, {})
+                    
                     characters.append({
                         "card_id": card_id,
                         "chara_id": chara_id,
                         "stars": stars_val,
                         "name": card_name,
-                        "attribute": card_attribute,  # 属性
+                        "attribute": stats.get("attribute") or card_attribute,  # 优先使用Assist Card的属性
                         "limit_type": limit_type,     # 限定种类
                         "icon_path": icon_path,
-                        "type": "assist"  # 标记为支援卡
+                        "type": "assist",  # 标记为支援卡
+                        # 战斗数值
+                        "hp": stats.get("hp", 10000),
+                        "attack": stats.get("attack", 5000),
+                        "defense": stats.get("defense", 3000),
+                        "speed": stats.get("speed", 1000),
+                        "attack_directions": stats.get("attack_directions", 1),
+                        "attack_type": stats.get("attack_type", "物理"),
+                        # 技能信息
+                        "skill1": {
+                            "cd": stats.get("skill1_cd", 0),
+                            "keywords": stats.get("skill1_keywords", ""),
+                            "condition": stats.get("skill1_condition", ""),
+                            "description": stats.get("skill1_description", "")
+                        },
+                        "skill2": {
+                            "cd": stats.get("skill2_cd", 0),
+                            "keywords": stats.get("skill2_keywords", ""),
+                            "condition": stats.get("skill2_condition", ""),
+                            "description": stats.get("skill2_description", "")
+                        }
                     })
                 except Exception as row_e:
                     log_error(f"处理行{row_idx}时出错: {row_e}")
@@ -2150,10 +2439,14 @@ def handle_message():
             return handle_leaderboard(user_id, group_id)
         elif '详细信息' in raw_message:
             return handle_show_details(user_id, group_id)
+        elif '战斗日志' in raw_message:
+            return handle_battle_log(user_id, group_id)
         elif '三王女' in raw_message:
             return handle_sannoujo(user_id, group_id)
         elif '三星池子' in raw_message or '红抽' in raw_message or '蓝抽' in raw_message:
             return handle_3star_pool(user_id, group_id, raw_message)
+        elif '战斗' in raw_message or '对战' in raw_message or '决斗' in raw_message:
+            return handle_battle(user_id, group_id, raw_message)
         
         return jsonify({"status": "ignored"})
 
@@ -2327,9 +2620,9 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
         
         info_text = (
             f"当前呱太: {current_gacha}\n"
-            f"累计抽卡: {total_draws}\n"
+            f"累计次数: {total_draws}\n"
             f"累计3星: {total_3stars}\n"
-            f"距离FES保底: {remaining_pity}抽\n"
+            f"距离FES保底: {remaining_pity}次\n"
         )
         prompt_text = f"{fes_pity_text}{info_text}\n请输入要开的编号：\n{hint_text}\n输入「全部开」一键开启"
 
@@ -2699,7 +2992,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         fes_text = "\n".join(fes_messages) if fes_messages else ""
         
         # 合成消息（不显示详细文字信息，只显示图片和简短提示）
-        short_text = f"开了{len(new_opened)}个！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看抽卡详情"
+        short_text = f"开了{len(new_opened)}个！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看详情"
 
         # 合成一条消息发送
         if img_path:
@@ -3345,6 +3638,240 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def handle_battle(user_id: str, group_id, raw_message: str):
+    """
+    处理对战请求
+    命令格式:
+    - 战斗 - 开始与AI对战
+    - 战斗 @玩家QQ - 与指定玩家对战
+    - 战斗帮助 - 显示战斗帮助
+    """
+    try:
+        # 检查战斗系统是否加载
+        if not BATTLE_SYSTEM_LOADED or BATTLE_INSTANCE is None:
+            reply = "战斗系统未加载，请稍后重试"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "战斗系统未加载"})
+        
+        # 检查是否是帮助命令
+        if '帮助' in raw_message:
+            reply = get_battle_help()
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}]\n{reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "success", "message": "显示战斗帮助"})
+        
+        # 解析对手（如果有@）
+        import re
+        at_match = re.search(r'\[CQ:at,qq=(\d+)\]', raw_message)
+        enemy_user_id = None
+        
+        if at_match:
+            enemy_user_id = at_match.group(1)
+            if enemy_user_id == user_id:
+                reply = "不能与自己对战！"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "不能与自己对战"})
+        
+        # 加载玩家队伍
+        player_team = load_team_data(user_id)
+        
+        # 检查玩家队伍是否有战斗卡
+        player_battle_cards = player_team.get("battle_cards", [])
+        player_has_cards = any(card for card in player_battle_cards)
+        
+        if not player_has_cards:
+            reply = "你的队伍还没有配置战斗卡！请先使用「队伍」命令配置队伍。"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "玩家队伍为空"})
+        
+        # 如果有对手，加载对手队伍
+        if enemy_user_id:
+            enemy_team = load_team_data(enemy_user_id)
+            enemy_battle_cards = enemy_team.get("battle_cards", [])
+            enemy_has_cards = any(card for card in enemy_battle_cards)
+            
+            if not enemy_has_cards:
+                reply = f"对手的队伍还没有配置战斗卡！"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "对手队伍为空"})
+            
+            enemy_name = f"玩家{enemy_user_id[:4]}****"
+        else:
+            # AI对手
+            enemy_team = generate_ai_team()
+            enemy_name = "AI对手"
+            
+            # 生成AI队伍图片
+            characters = get_characters()
+            ai_team_img_path = build_team_image(enemy_team, characters)
+            if ai_team_img_path:
+                # 发送AI队伍图片
+                at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+                send_message(at_message + "🎮 AI对手的队伍配置：", user_id, group_id)
+                send_image(ai_team_img_path, user_id, group_id)
+        
+        # 执行战斗
+        log_info(f"战斗开始: {user_id} vs {enemy_user_id or 'AI'}")
+        result = BATTLE_INSTANCE.start_battle(player_team, enemy_team)
+        
+        # 保存战斗日志
+        battle_log_key = f"battle_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        battle_log_path = INFO_DIR / f"{battle_log_key}.json"
+        with open(battle_log_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        
+        # 生成简短结果
+        winner = result["winner"]
+        rounds = result["rounds"]
+        
+        if winner == "player":
+            result_text = f"🏆 胜利！经过 {rounds} 回合的激战，你击败了 {enemy_name}！"
+        else:
+            result_text = f"💀 失败... 经过 {rounds} 回合的激战，你被 {enemy_name} 击败了..."
+        
+        # 统计双方存活情况
+        player_alive = sum(1 for u in result["player_units"] if u["alive"] and not u["is_assist"])
+        enemy_alive = sum(1 for u in result["enemy_units"] if u["alive"] and not u["is_assist"])
+        
+        result_text += f"\n📊 最终状态: 我方存活 {player_alive}/6, 敌方存活 {enemy_alive}/6"
+        
+        # 发送结果
+        at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+        send_message(at_message + result_text, user_id, group_id)
+        
+        log_info(f"战斗结束: {user_id} vs {enemy_user_id or 'AI'}, winner={winner}, rounds={rounds}")
+        
+        return jsonify({
+            "status": "success",
+            "message": result_text,
+            "winner": winner,
+            "rounds": rounds,
+            "battle_log_key": battle_log_key
+        })
+    
+    except Exception as e:
+        log_error(f"战斗失败: {e}")
+        reply = f"战斗失败: {str(e)}"
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def generate_ai_team() -> dict:
+    """生成AI队伍（从三星卡中选择，满足配队要求：同位置B/A卡同色、同攻击类型）"""
+    characters = get_characters()
+    
+    # 筛选三星及以上的战斗卡和支援卡
+    battle_card_pool = [c for c in characters if c.get("type") == "battle" and c.get("stars", 0) >= 3]
+    assist_card_pool = [c for c in characters if c.get("type") == "assist" and c.get("stars", 0) >= 3]
+    
+    if not battle_card_pool:
+        log_error("没有可用的战斗卡！")
+        return {"battle_cards": [], "assist_cards": []}
+    
+    battle_cards = []
+    assist_cards = []
+    
+    for position in range(6):
+        # 随机选择一个战斗卡
+        if battle_card_pool:
+            battle_card = random.choice(battle_card_pool)
+            battle_cards.append(str(battle_card.get("card_id", "")))
+            
+            # 获取战斗卡的属性和攻击类型
+            battle_attr = battle_card.get("attribute", "")
+            battle_attack_type = battle_card.get("attack_type", "")
+            
+            # 寻找匹配的支援卡（同属性、同攻击类型）
+            matching_assist = [c for c in assist_card_pool 
+                              if c.get("attribute", "") == battle_attr 
+                              and c.get("attack_type", "") == battle_attack_type]
+            
+            if matching_assist:
+                assist_card = random.choice(matching_assist)
+                assist_cards.append(str(assist_card.get("card_id", "")))
+            else:
+                # 如果没有匹配的，随机选择一个支援卡
+                if assist_card_pool:
+                    assist_card = random.choice(assist_card_pool)
+                    assist_cards.append(str(assist_card.get("card_id", "")))
+                else:
+                    assist_cards.append(None)
+        else:
+            battle_cards.append(None)
+            assist_cards.append(None)
+    
+    log_info(f"AI队伍生成完成: {battle_cards}, {assist_cards}")
+    return {
+        "battle_cards": battle_cards,
+        "assist_cards": assist_cards
+    }
+
+
+def handle_battle_log(user_id: str, group_id):
+    """显示最近一场战斗的详细日志"""
+    try:
+        # 查找最近的战斗日志
+        battle_logs = sorted(INFO_DIR.glob(f"battle_{user_id}_*.json"), reverse=True)
+        
+        if not battle_logs:
+            reply = "你还没有进行过战斗！"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "没有战斗日志"})
+        
+        # 读取最近的战斗日志
+        latest_log = battle_logs[0]
+        with open(latest_log, "r", encoding="utf-8") as f:
+            result = json.load(f)
+        
+        # 生成详细战斗日志
+        log_text = format_battle_result(result)
+        
+        # 发送日志（分段发送，避免消息过长）
+        chunks = []
+        current_chunk = ""
+        
+        for line in log_text.split("\n"):
+            if len(current_chunk) + len(line) > 1500:
+                chunks.append(current_chunk)
+                current_chunk = line + "\n"
+            else:
+                current_chunk += line + "\n"
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        # 发送第一段
+        at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+        send_message(at_message + chunks[0], user_id, group_id)
+        
+        # 发送剩余部分
+        for chunk in chunks[1:]:
+            send_message(chunk, user_id, group_id)
+        
+        return jsonify({"status": "success", "message": "显示战斗日志"})
+    
+    except Exception as e:
+        log_error(f"获取战斗日志失败: {e}")
+        reply = f"获取战斗日志失败: {str(e)}"
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 def handle_team(user_id: str, group_id, raw_message: str):
     """处理配队相关命令"""
     try:
@@ -3662,6 +4189,11 @@ if __name__ == '__main__':
     # 预加载角色数据
     characters = load_character_data()
     log_info(f"共加载 {len(characters)} 个角色")
+
+    # 初始化战斗系统
+    if BATTLE_SYSTEM_LOADED:
+        BATTLE_INSTANCE = BattleSystem(characters)
+        log_info("战斗系统初始化完成")
 
     # 计算并记录日活数据
     record_daily_dau()
