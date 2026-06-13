@@ -1,6 +1,8 @@
 # TOARU Bot - 幻想收束的模拟抽卡QQbot
 
-![Python](https://img.shields.io/badge/-Python-000000?style=flat&logo=python)  
+![Python](https://img.shields.io/badge/-Python-000000?style=flat&logo=python)
+![GitHub Repo stars](https://img.shields.io/github/stars/UCCPR/ifbot)
+   
 基于 Napcat 框架的ifbot
 
 仅供群友自娱自乐，有需要请直接issue我
