@@ -34,6 +34,7 @@ try:
         auto_save_preset,
         load_preset,
         load_presets,
+        save_presets,
         list_presets_info
     )
     TEAM_SYSTEM_LOADED = True
@@ -50,6 +51,7 @@ except ImportError as e:
     def auto_save_preset(user_id): return -1
     def load_preset(user_id, slot): return False
     def load_presets(user_id): return {"presets": [], "active_slot": 0}
+    def save_presets(user_id, data): pass
     def list_presets_info(user_id, characters): return "配队系统未加载"
     def set_team_card(user_id, position, card_id, card_type="battle"): return False
     def clear_team_card(user_id, position, card_type="battle"): return False
@@ -58,15 +60,19 @@ except ImportError as e:
 
 # 导入战斗系统
 try:
-    from battle_system import BattleSystem, format_battle_result, get_battle_help
+    from battle_system import BattleSystem, format_battle_result, format_boss_result, get_battle_help
     BATTLE_SYSTEM_LOADED = True
     BATTLE_INSTANCE = None  # 战斗系统实例
 except ImportError as e:
     BATTLE_SYSTEM_LOADED = False
     class BattleSystem:
         def __init__(self, data): pass
-        def start_battle(self, p_team, e_team, challenger="player"): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
+        def start_battle(self, p_team, e_team, challenger="player", initial_player_sp=0): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
+        def start_boss_battle(self, player_team, boss_card_id, initial_sp=90): return {"boss_name": "???", "boss_starting_hp": 15000000, "boss_ending_hp": 15000000, "damage_dealt": 0, "damage_percent": 0, "rounds": 0, "player_survived": 0, "player_total": 0, "boss_killed": False, "log": [], "player_units": [], "enemy_units": []}
+        def get_character(self, card_id): return None
+        def _get_fallback_character(self, card_id): return None
     def format_battle_result(result): return "战斗系统未加载"
+    def format_boss_result(result): return "战斗系统未加载"
     def get_battle_help(): return "战斗系统未加载"
 
 
@@ -144,7 +150,9 @@ try:
         GACHA_2STAR_PROB,
         GACHA_3STAR_PROB,
         # 管理员
-        ADMIN_QQ
+        ADMIN_QQ,
+        # BOSS战
+        BOSS_BATTLE_COOLDOWN_SECONDS
     )
 except ImportError:
     # 如果配置文件不存在，使用默认值
@@ -185,6 +193,8 @@ except ImportError:
     GACHA_1STAR_PROB = 72   # 1星概率（权重）
     GACHA_2STAR_PROB = 23   # 2星概率（权重）
     GACHA_3STAR_PROB = 3    # 3星概率（权重）
+    # BOSS战
+    BOSS_BATTLE_COOLDOWN_SECONDS = 60
     ADMIN_QQ = ""  # 管理员QQ
 
 # 定义概率权重常量（避免代码重复）
@@ -210,6 +220,7 @@ DAILY_SEND_STATS = {}  # 每日发送消息统计 {日期: 发送次数}
 DAILY_USER_SET = set()  # 今日活跃用户ID集合
 _RESTORED_DAU = 0       # 重启后从磁盘恢复的日活基准数
 GACHA10_COOLDOWN = {}  # 十连冷却时间 {user_id: last_gacha10_timestamp}
+BOSS_BATTLE_COOLDOWN = {}  # BOSS战冷却时间 {user_id: last_boss_battle_timestamp}
 
 
 # ========== 预加载模块 ==========
@@ -2309,6 +2320,8 @@ def handle_message():
                     reply = f"[CQ:at,qq={user_id}] {reply}"
                 send_message(reply, user_id, group_id)
                 return jsonify({"status": "error", "message": "未指定排名"})
+        elif 'BOSS战' in raw_message or 'boss战' in raw_message:
+            return handle_boss_battle(user_id, group_id, raw_message)
         elif '战斗' in raw_message or '对战' in raw_message or '决斗' in raw_message:
             return handle_battle(user_id, group_id, raw_message)
         
@@ -3688,6 +3701,119 @@ def handle_battle(user_id: str, group_id, raw_message: str):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def handle_boss_battle(user_id: str, group_id, raw_message: str):
+    """
+    处理BOSS战请求
+    命令格式: BOSS战 / boss战
+    BOSS由config.py中的BOSS_CARD_ID指定，初始SP=90
+    """
+    try:
+        if not BATTLE_SYSTEM_LOADED or BATTLE_INSTANCE is None:
+            reply = "战斗系统未加载，请稍后重试"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "战斗系统未加载"})
+
+        # BOSS战冷却检查
+        now_ts = datetime.now().timestamp()
+        last_boss = BOSS_BATTLE_COOLDOWN.get(user_id, 0)
+        remaining = BOSS_BATTLE_COOLDOWN_SECONDS - (now_ts - last_boss)
+        if remaining > 0:
+            reply = f"BOSS战冷却中！请等待 {int(remaining)} 秒后再试~"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            log_info(f"BOSS战冷却 [{user_id}]: 还需等待 {int(remaining)} 秒")
+            return jsonify({
+                "status": "cooldown",
+                "message": "BOSS战冷却中",
+                "remaining_seconds": int(remaining)
+            })
+
+        # 从config获取BOSS卡牌ID
+        try:
+            from config import BOSS_CARD_ID
+        except ImportError:
+            BOSS_CARD_ID = "100430006"  # 默认
+
+        # 加载玩家队伍
+        player_team = load_team_data(user_id)
+        player_battle_cards = player_team.get("battle_cards", [])
+        player_has_cards = any(card for card in player_battle_cards)
+
+        # 读取活跃预设信息
+        active_slot = 0
+        try:
+            pdata = load_presets(user_id)
+            active_slot = pdata.get("active_slot", 0)
+        except Exception:
+            pass
+
+        if not player_has_cards:
+            reply = "你的队伍还没有配置战斗卡！请先使用「队伍 我的卡」命令配置队伍。"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "玩家队伍为空"})
+
+        # 查找BOSS角色
+        boss_char = BATTLE_INSTANCE.get_character(str(BOSS_CARD_ID))
+        if not boss_char:
+            boss_char = BATTLE_INSTANCE._get_fallback_character(str(BOSS_CARD_ID))
+        boss_name = boss_char.name
+
+        # 构建BOSS队伍用于VS图（位置1=中间，单卡+5空位，无A卡）
+        boss_team = {
+            "battle_cards": [None, str(BOSS_CARD_ID)] + [None] * 4,
+            "assist_cards": [None] * 6
+        }
+
+        # 发送双方VS配队图
+        characters = get_characters()
+        at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+        vs_img = build_vs_team_image(player_team, boss_team, characters)
+        if vs_img:
+            send_image(vs_img, user_id, group_id)
+        send_message(at_message + f"⚔️ BOSS战 VS 【{boss_name}】 (HP: 15,000,000)", user_id, group_id)
+
+        # 执行BOSS战
+        log_info(f"BOSS战开始: {user_id} vs BOSS({BOSS_CARD_ID} {boss_name})")
+        BOSS_BATTLE_COOLDOWN[user_id] = datetime.now().timestamp()
+        result = BATTLE_INSTANCE.start_boss_battle(
+            player_team, str(BOSS_CARD_ID), initial_sp=90
+        )
+
+        # 保存战斗日志（复用现有）
+        save_rolling_battle_log(user_id, result)
+
+        # 格式化并发送结果
+        result_text = format_boss_result(result)
+        if active_slot > 0:
+            result_text += f"\n📋 使用预设: 槽{active_slot}"
+
+        send_message(at_message + result_text, user_id, group_id)
+
+        log_info(f"BOSS战结束: {user_id}, damage={result['damage_dealt']}, pct={result['damage_percent']}%")
+
+        return jsonify({
+            "status": "success",
+            "message": result_text,
+            "boss_name": result["boss_name"],
+            "damage_dealt": result["damage_dealt"],
+            "damage_percent": result["damage_percent"],
+            "rounds": result["rounds"]
+        })
+
+    except Exception as e:
+        log_error(f"BOSS战失败: {e}")
+        reply = f"BOSS战失败: {str(e)}"
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 def generate_ai_team(difficulty: int = 2) -> dict:
     """
     生成AI队伍
@@ -4249,9 +4375,12 @@ def handle_battle_log(user_id: str, group_id):
 
         # 读取最近一次战斗日志
         result = all_logs[-1]
-        
-        # 生成战斗日志并合并为一条消息
-        log_text = format_battle_result(result)
+
+        # 判断是BOSS战还是普通战斗，使用对应的格式化函数
+        if "boss_name" in result:
+            log_text = format_boss_result(result)
+        else:
+            log_text = format_battle_result(result)
         # 压缩空行
         import re
         log_text = re.sub(r'\n{3,}', '\n\n', log_text)
@@ -4564,7 +4693,30 @@ def handle_team(user_id: str, group_id, raw_message: str):
                         reply += f"\n[CQ:image,file=base64://{image_base64}]"
                         os.remove(img_path)
                 else:
-                    reply = f"预设{slot}为空！"
+                    # 预设为空 → 自动配队并保存到此槽位
+                    reply = f"预设{slot}为空，正在自动配队...\n"
+                    result = auto_build_team(user_id, characters)
+                    if result["success"] and result["team"]:
+                        # 保存自动配队结果到当前队伍
+                        save_team_data(user_id, result["team"])
+                        # 保存到此预设槽位
+                        presets_data = load_presets(user_id)
+                        presets_data["presets"][slot - 1] = {
+                            "battle_cards": list(result["team"].get("battle_cards", [])),
+                            "assist_cards": list(result["team"].get("assist_cards", []))
+                        }
+                        presets_data["active_slot"] = slot
+                        save_presets(user_id, presets_data)
+                        reply += f"预设{slot}自动配队完成！"
+                        # 显示新队伍
+                        img_path = build_team_image(result["team"], characters)
+                        if img_path and os.path.exists(img_path):
+                            with open(img_path, "rb") as f:
+                                image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
+                            reply += f"\n[CQ:image,file=base64://{image_base64}]"
+                            os.remove(img_path)
+                    else:
+                        reply += result.get("message", "自动配队失败，请先抽卡！")
             else:
                 reply = "格式：队伍 切换 1~6"
             if group_id and user_id:

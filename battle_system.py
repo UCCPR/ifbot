@@ -1965,11 +1965,11 @@ class BattleSystem:
             return "skill"
         return "normal"
     
-    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player") -> dict:
+    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player", initial_player_sp: int = 0) -> dict:
         """开始战斗"""
         log_battle("=" * 50)
         log_battle("战斗开始！")
-        
+
         player_units = self.build_battle_team(player_team)
         enemy_units = self.build_battle_team(enemy_team)
 
@@ -1984,7 +1984,7 @@ class BattleSystem:
                 u.character.name = f'{u.character.name}[{arrows[u.position%3]}]'
 
         # 阵营SP池（共用SP）
-        player_sp = 0
+        player_sp = initial_player_sp
         enemy_sp = 0
         
         battle_log = []
@@ -2205,7 +2205,76 @@ class BattleSystem:
         winner = "enemy" if challenger == "player" else "player"
         
         return self._create_result(winner, MAX_BATTLE_ROUNDS, battle_log, player_units, enemy_units)
-    
+
+    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 90) -> dict:
+        """BOSS战：玩家队伍 vs 单个1500万血量BOSS（12回合限制）
+
+        :param player_team: 玩家队伍数据 {"battle_cards": [...], "assist_cards": [...]}
+        :param boss_card_id: BOSS角色卡牌ID
+        :param initial_sp: 玩家初始SP（默认90）
+        :return: BOSS战结果字典
+        """
+        log_battle("=" * 50)
+        log_battle(f"BOSS战开始！BOSS={boss_card_id}")
+
+        # 获取BOSS角色信息
+        boss_char = self.get_character(boss_card_id)
+        if not boss_char:
+            boss_char = self._get_fallback_character(boss_card_id)
+
+        boss_name = boss_char.name
+
+        # 临时将BOSS角色HP改为1500万
+        original_hp = boss_char.hp
+        boss_char.hp = 15_000_000
+        BOSS_STARTING_HP = 15_000_000
+
+        try:
+            # 构建BOSS队伍（位置1=中间列，单卡，无A卡）
+            boss_team = {"battle_cards": [None, boss_card_id], "assist_cards": []}
+
+            # 调用现有战斗系统
+            result = self.start_battle(
+                player_team, boss_team,
+                challenger="player",
+                initial_player_sp=initial_sp
+            )
+        finally:
+            # 恢复BOSS原始HP
+            boss_char.hp = original_hp
+
+        # 计算伤害
+        boss_ending_hp = 0
+        for u in result.get("enemy_units", []):
+            if not u.get("is_assist"):
+                boss_ending_hp += u.get("hp", 0)
+
+        damage_dealt = max(0, BOSS_STARTING_HP - boss_ending_hp)
+        boss_killed = boss_ending_hp <= 0
+
+        # 统计玩家存活
+        player_battle_units = [u for u in result.get("player_units", []) if not u.get("is_assist")]
+        player_survived = sum(1 for u in player_battle_units if u.get("alive"))
+        player_total = len(player_battle_units)
+
+        log_battle(f"BOSS战结束: boss={boss_name}, damage={damage_dealt}, pct={round(damage_dealt/BOSS_STARTING_HP*100, 2)}%, rounds={result['rounds']}")
+
+        return {
+            "boss_name": boss_name,
+            "boss_card_id": boss_card_id,
+            "boss_starting_hp": BOSS_STARTING_HP,
+            "boss_ending_hp": boss_ending_hp,
+            "damage_dealt": damage_dealt,
+            "damage_percent": round(damage_dealt / BOSS_STARTING_HP * 100, 2),
+            "rounds": result["rounds"],
+            "player_survived": player_survived,
+            "player_total": player_total,
+            "boss_killed": boss_killed,
+            "log": result.get("log", []),
+            "player_units": result.get("player_units", []),
+            "enemy_units": result.get("enemy_units", [])
+        }
+
     def _create_result(self, winner: str, rounds: int, log: List[str],
                       player_units: List[BattleUnit], enemy_units: List[BattleUnit]) -> dict:
         """创建战斗结果"""
@@ -2272,6 +2341,53 @@ def format_battle_result(result: dict) -> str:
     return "\n".join(lines)
 
 
+# ========== BOSS战结果格式化 ==========
+def format_boss_result(result: dict) -> str:
+    """格式化BOSS战结果"""
+    boss_name = result.get("boss_name", "???")
+    boss_start = result.get("boss_starting_hp", 15000000)
+    boss_end = result.get("boss_ending_hp", 0)
+    damage = result.get("damage_dealt", 0)
+    damage_pct = result.get("damage_percent", 0)
+    rounds = result.get("rounds", 0)
+    survived = result.get("player_survived", 0)
+    total = result.get("player_total", 0)
+    boss_killed = result.get("boss_killed", False)
+
+    def fmt_hp(n: int) -> str:
+        return f"{n:,}"
+
+    lines = []
+    lines.append("")
+    lines.append("=" * 40)
+    lines.append("       BOSS战 结果")
+    lines.append("=" * 40)
+    lines.append(f"  BOSS: {boss_name}")
+    lines.append(f"  BOSS HP: {fmt_hp(boss_start)} → {fmt_hp(boss_end)}")
+    lines.append(f"  造成伤害: {fmt_hp(damage)} ({damage_pct}%)")
+
+    if boss_killed:
+        lines.append(f"  !! BOSS被击杀 !!")
+
+    lines.append(f"  战斗回合: {rounds}/12")
+    lines.append(f"  玩家存活: {survived}/{total}")
+
+    # 玩家队伍状态
+    lines.append("-" * 40)
+    lines.append("  玩家队伍:")
+    player_units = [u for u in result.get("player_units", []) if not u.get("is_assist")]
+    for u in player_units:
+        status = "O" if u.get("alive") else "X"
+        name = u.get("name", "???")
+        hp = u.get("hp", 0)
+        max_hp = u.get("max_hp", 0)
+        lines.append(f"   [{status}] {name}: {fmt_hp(hp)}/{fmt_hp(max_hp)}")
+
+    lines.append("=" * 40)
+
+    return "\n".join(lines)
+
+
 # ========== 帮助信息 ==========
 def get_battle_help() -> str:
     """获取战斗系统帮助信息"""
@@ -2287,6 +2403,9 @@ def get_battle_help() -> str:
 ║                                                              ║
 ║  · 战斗 @玩家                                                ║
 ║    与指定玩家对战                                             ║
+║                                                              ║
+║  · BOSS战                                                    ║
+║    挑战1500万血量BOSS（自动战斗，限12回合）                   ║
 ║                                                              ║
 ║  · 战斗日志                                                  ║
 ║    查看最近一场战斗的详细日志                                 ║

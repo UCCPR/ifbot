@@ -54,6 +54,10 @@ GACHA_3STAR_PROB = 3    # 3星概率（权重）
 # 管理员配置
 ADMIN_QQ = "3590876913"  # 管理员QQ号，可使用管理命令
 
+# BOSS战配置
+BOSS_CARD_ID = "100430006"  # BOSS战使用的卡牌ID（3星B卡）
+BOSS_BATTLE_COOLDOWN_SECONDS = 60  # BOSS战冷却时间（秒）
+
 # 额外配置示例（自定义添加）
 DEBUG_MODE = False  # 是否开启调试模式
 LOG_LEVEL = "INFO"  # 日志级别：DEBUG, INFO, WARNING, ERROR
