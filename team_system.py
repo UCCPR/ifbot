@@ -82,6 +82,126 @@ def save_team_data(user_id: str, team_data: dict):
         json.dump(team_data, f, indent=2)
 
 
+# ========== 队伍预设系统（6个预设槽位） ==========
+MAX_PRESETS = 6
+PRESET_CYCLE = 0  # 满了之后从第几个开始覆盖（递增）
+
+
+def get_presets_file(user_id: str) -> Path:
+    """获取用户预设文件路径"""
+    return INFO_DIR / f"team_presets_{user_id}.json"
+
+
+def load_presets(user_id: str) -> dict:
+    """加载所有预设"""
+    f = get_presets_file(user_id)
+    if f.exists():
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+            # 兼容旧格式
+            if "presets" not in data:
+                data = {"presets": [None] * MAX_PRESETS, "cycle": 0}
+            # 确保 presets 长度正确
+            while len(data.get("presets", [])) < MAX_PRESETS:
+                data["presets"].append(None)
+            return data
+        except Exception:
+            pass
+    return {"presets": [None] * MAX_PRESETS, "cycle": 0, "active_slot": 0}
+
+
+def save_presets(user_id: str, data: dict):
+    """保存所有预设"""
+    f = get_presets_file(user_id)
+    with open(f, "w", encoding="utf-8") as fp:
+        json.dump(data, fp, indent=2)
+
+
+def _get_active_slot(user_id: str) -> int:
+    """获取当前活跃预设槽位（0=无活跃）"""
+    data = load_presets(user_id)
+    return data.get("active_slot", 0)
+
+
+def auto_save_preset(user_id: str):
+    """编辑队伍时自动保存到当前活跃预设槽位，无活跃则找空槽"""
+    team_data = load_team_data(user_id)
+    battle = team_data.get("battle_cards", [None] * BATTLE_CARD_COUNT)
+    assist = team_data.get("assist_cards", [None] * ASSIST_CARD_COUNT)
+
+    if not any(battle) and not any(assist):
+        return -1
+
+    presets_data = load_presets(user_id)
+    presets = presets_data["presets"]
+    active = presets_data.get("active_slot", 0)
+
+    # 有活跃槽位 → 直接覆盖
+    if active > 0 and active <= MAX_PRESETS:
+        presets[active - 1] = {"battle_cards": list(battle), "assist_cards": list(assist)}
+        save_presets(user_id, presets_data)
+        return active
+
+    # 无活跃 → 找空槽
+    for i in range(MAX_PRESETS):
+        if presets[i] is None:
+            presets[i] = {"battle_cards": list(battle), "assist_cards": list(assist)}
+            presets_data["active_slot"] = i + 1
+            save_presets(user_id, presets_data)
+            return i + 1
+
+    # 全满且无活跃 → 覆盖槽1
+    presets[0] = {"battle_cards": list(battle), "assist_cards": list(assist)}
+    presets_data["active_slot"] = 1
+    save_presets(user_id, presets_data)
+    return 1
+
+
+def load_preset(user_id: str, slot: int) -> bool:
+    """加载预设槽位(1-6)到当前队伍，并将其设为活跃槽位"""
+    if slot < 1 or slot > MAX_PRESETS:
+        return False
+    presets_data = load_presets(user_id)
+    preset = presets_data["presets"][slot - 1]
+    if preset is None:
+        return False
+    team_data = load_team_data(user_id)
+    team_data["battle_cards"] = list(preset.get("battle_cards", [None] * BATTLE_CARD_COUNT))
+    team_data["assist_cards"] = list(preset.get("assist_cards", [None] * ASSIST_CARD_COUNT))
+    save_team_data(user_id, team_data)
+    # 标记活跃槽位
+    presets_data["active_slot"] = slot
+    save_presets(user_id, presets_data)
+    return True
+
+
+def list_presets_info(user_id: str, characters: list) -> str:
+    """获取所有预设的摘要信息"""
+    presets_data = load_presets(user_id)
+    presets = presets_data["presets"]
+
+    active = presets_data.get("active_slot", 0)
+    lines = ["📋 队伍预设 (共6个槽位)："]
+    for i in range(MAX_PRESETS):
+        p = presets[i]
+        marker = " ◀当前" if (i + 1) == active else ""
+        if p is None:
+            lines.append(f"  槽{i+1}: 空{marker}")
+        else:
+            b_count = sum(1 for c in p.get("battle_cards", []) if c)
+            a_count = sum(1 for c in p.get("assist_cards", []) if c)
+            # 取第一张B卡名字作为标识
+            first_name = "?"
+            bc = p.get("battle_cards", [])
+            if bc and bc[0] and characters:
+                chara = next((c for c in characters if str(c.get("card_id")) == str(bc[0])), None)
+                if chara:
+                    first_name = chara.get("name", "?")
+            lines.append(f"  槽{i+1}: ⚔{b_count}+🛡{a_count} [{first_name}...]")
+    return "\n".join(lines)
+
+
 # ========== 获取用户的三星卡 ==========
 def get_pity_file(user_id: str) -> Path:
     """获取用户抽卡记录文件路径"""
@@ -273,7 +393,7 @@ def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
     output_rgb.paste(output, (0, 0), output)
     
     bio = BytesIO()
-    output_rgb.save(bio, format='PNG', optimize=True, quality=80)
+    output_rgb.save(bio, format='JPEG', optimize=True, quality=55)
     return bio.getvalue()
 
 
@@ -414,7 +534,7 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     # 保存图片
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"team_cards_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
-    output.save(img_path, format='PNG', optimize=True)
+    output.convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
     
     return str(img_path), current_page_cards, total_pages
 
@@ -533,8 +653,106 @@ def build_team_image(team_data: dict, characters: list) -> str:
     # 保存图片
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"team_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
-    output.save(img_path, format='PNG', optimize=True, quality=80)
+    output.convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
     
+    return str(img_path)
+
+
+def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -> str:
+    """
+    构建双方对战配队图：玩家在上，敌方在下，中间VS图标
+    紧凑布局，压缩输出
+    """
+    battle_cards_p = player_team.get("battle_cards", [None] * BATTLE_CARD_COUNT)
+    assist_cards_p = player_team.get("assist_cards", [None] * ASSIST_CARD_COUNT)
+    battle_cards_e = enemy_team.get("battle_cards", [None] * BATTLE_CARD_COUNT)
+    assist_cards_e = enemy_team.get("assist_cards", [None] * ASSIST_CARD_COUNT)
+
+    def _load_team_imgs(battle_ids, assist_ids):
+        b_imgs, a_imgs = [], []
+        for cid in battle_ids:
+            if cid:
+                chara = next((c for c in characters if str(c.get("card_id")) == str(cid)), None)
+                b_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=True))) if chara else create_empty_slot_image())
+            else:
+                b_imgs.append(create_empty_slot_image())
+        for cid in assist_ids:
+            if cid:
+                chara = next((c for c in characters if str(c.get("card_id")) == str(cid)), None)
+                a_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=False))) if chara else create_empty_slot_image())
+            else:
+                a_imgs.append(create_empty_slot_image())
+        return b_imgs, a_imgs
+
+    p_battle, p_assist = _load_team_imgs(battle_cards_p, assist_cards_p)
+    e_battle, e_assist = _load_team_imgs(battle_cards_e, assist_cards_e)
+
+    # 600×600 方形布局
+    bg_width = 600
+    cols, rows = 6, 2
+    gap_x, gap_y = 4, 2
+    pad_x, pad_y = 10, 4
+    avail_w = bg_width - pad_x * 2
+    # 计算卡牌尺寸
+    all_imgs = p_battle + p_assist + e_battle + e_assist
+    first = next((img for img in all_imgs if img), None)
+    if not first:
+        return None
+    orig_w, orig_h = first.size
+    max_cw = (avail_w - gap_x * (cols - 1)) // cols
+    cw = max_cw
+    ch = int(orig_h * cw / orig_w)
+    total_w = cw * cols + gap_x * (cols - 1)
+    rows_h = ch * rows + gap_y
+    section_h = rows_h + pad_y * 2
+    start_x = (bg_width - total_w) // 2
+
+    # VS图标
+    vs_path = LEVEL_DIR / "arena_p_icon_vs_00.png"
+    vs_img = None
+    vs_h = 0
+    if vs_path.exists():
+        vs_img = Image.open(vs_path).convert("RGBA")
+        vs_target_h = 30
+        vs_scale = vs_target_h / vs_img.height
+        vs_img = vs_img.resize((int(vs_img.width * vs_scale), vs_target_h), Image.Resampling.LANCZOS)
+        vs_h = vs_target_h + 2
+
+    total_h = section_h * 2 + vs_h
+
+    # 加载背景图并铺满整张画布
+    bg_path = None
+    for bg_name in ["bg_000001001.png", "gacha_tmb_bg_10.png", "gacha_tmb_10_bg.png"]:
+        test_path = LEVEL_DIR / bg_name
+        if test_path.exists():
+            bg_path = str(test_path)
+            break
+    if bg_path:
+        output = Image.open(bg_path).convert('RGB').resize((bg_width, total_h), Image.Resampling.LANCZOS)
+    else:
+        output = Image.new('RGB', (bg_width, total_h), (40, 40, 60))
+
+    def _render_team_section(battle_imgs, assist_imgs, y_offset):
+        start_y = y_offset + pad_y
+        for i, img in enumerate(battle_imgs):
+            x = start_x + (i % cols) * (cw + gap_x)
+            output.paste(img.resize((cw, ch), Image.Resampling.LANCZOS), (x, start_y))
+        for i, img in enumerate(assist_imgs):
+            x = start_x + (i % cols) * (cw + gap_x)
+            output.paste(img.resize((cw, ch), Image.Resampling.LANCZOS), (x, start_y + ch + gap_y))
+
+    _render_team_section(p_battle, p_assist, 0)
+    _render_team_section(e_battle, e_assist, section_h + vs_h)
+
+    # 粘贴VS图标（居中）
+    if vs_img:
+        vs_x = (bg_width - vs_img.width) // 2
+        vs_y = section_h + (vs_h - vs_img.height) // 2
+        output.paste(vs_img, (vs_x, vs_y), vs_img)
+
+    output_idx = random.randint(1000, 9999)
+    img_path = OUTPUT_DIR / f"vs_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.jpg"
+    output.save(img_path, format='JPEG', optimize=True, quality=65)
     return str(img_path)
 
 
@@ -577,24 +795,36 @@ def set_team_card(user_id: str, position: int, card_id: str, card_type: str = "b
     """
     if position < 1 or position > 6:
         return False
-    
+
     idx = position - 1
     team_data = load_team_data(user_id)
-    
+
     # 验证卡牌是否属于用户且是三星卡
     user_cards = get_user_3star_cards(user_id)
     card_found = any(str(c.get("card_id")) == str(card_id) for c in user_cards)
-    
+
     if not card_found:
         return False
-    
+
+    # 检查同一张卡是否已在队伍的其他位置使用
+    all_placed = (team_data.get("battle_cards", []) +
+                  team_data.get("assist_cards", []))
+    for i, existing_id in enumerate(all_placed):
+        if existing_id and str(existing_id) == str(card_id):
+            # 如果是同一个位置且同类型，允许覆盖（更新）
+            if i == idx and card_type == "battle":
+                continue
+            if i == idx + 6 and card_type == "assist":  # assist位置索引偏移
+                continue
+            return False  # 卡牌已在其他位置使用
+
     if card_type == "battle":
         team_data["battle_cards"][idx] = card_id
     elif card_type == "assist":
         team_data["assist_cards"][idx] = card_id
     else:
         return False
-    
+
     save_team_data(user_id, team_data)
     return True
 
@@ -674,114 +904,320 @@ def get_team_info(user_id: str, characters: list) -> str:
 def auto_build_team(user_id: str, characters: list) -> dict:
     """
     自动配队：AI自动配队
-    逻辑：B+A同色而且同物理/异能，FES卡优先
+    核心原则：同色+同攻击类型 >> 其他，尽可能塞满6个位置
+    优先三星卡，不足时用低星卡填充
     :return: 配队结果 {"success": bool, "message": str, "team": dict}
     """
-    user_cards = get_user_3star_cards(user_id, characters)
-    
-    if not user_cards:
-        return {"success": False, "message": "没有可用的三星卡！", "team": None}
-    
-    # 获取详细的卡牌信息
+    # 获取用户全部卡牌（按星级排序，三星优先）
+    pity_data = load_pity_data(user_id)
+    card_collection = pity_data.get("card_collection", {})
+
+    all_user_cards = []
+    for card_id, info in card_collection.items():
+        stars = info.get("stars", 1)
+        chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+        card_type = chara.get("type", "battle") if chara else "battle"
+        all_user_cards.append({
+            "card_id": card_id,
+            "name": info.get("name", ""),
+            "stars": stars,
+            "limit_type": info.get("limit_type", ""),
+            "count": info.get("count", 1),
+            "type": card_type,
+        })
+
+    if not all_user_cards:
+        return {"success": False, "message": "没有任何卡牌！请先抽卡", "team": None}
+
+    # 按星级降序：三星 > 二星 > 一星
+    all_user_cards.sort(key=lambda x: x["stars"], reverse=True)
+
+    # ===== 1. 获取详细卡牌信息并打分 (星级权重极大) =====
     battle_cards = []
     assist_cards = []
-    
-    for card in user_cards:
+
+    for card in all_user_cards:
         card_id = card.get("card_id")
         chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
-        if chara:
-            card_info = {
-                "card_id": card_id,
-                "name": chara.get("name", ""),
-                "attribute": chara.get("attribute", ""),
-                "attack_type": chara.get("attack_type", ""),
-                "type": chara.get("type", "battle"),
-                "limit_type": chara.get("limit_type", ""),
-                "is_fes": chara.get("limit_type") == "フェス限定"
-            }
-            if card_info["type"] == "battle":
-                battle_cards.append(card_info)
-            else:
-                assist_cards.append(card_info)
-    
-    # 按FES优先排序
-    battle_cards.sort(key=lambda x: (not x["is_fes"], x.get("name", "")))
-    assist_cards.sort(key=lambda x: (not x["is_fes"], x.get("name", "")))
-    
-    # 配队：6个位置
+        if not chara:
+            continue
+
+        hp = chara.get("hp", 5000)
+        attack = chara.get("attack", 3000)
+        defense = chara.get("defense", 2000)
+        speed = chara.get("speed", 500)
+        dire_raw = chara.get("attack_directions", [0])
+        dire_count = len(dire_raw) if isinstance(dire_raw, list) else dire_raw
+        stars = card["stars"]
+
+        # 星级是压倒性因素: 三星卡远高于低星
+        star_mult = {3: 10.0, 2: 1.0, 1: 0.1}[stars]
+
+        # FES/期间限定加分
+        limit_type = chara.get("limit_type", "")
+        limit_mult = 1.5 if limit_type == "フェス限定" else (1.3 if limit_type == "期間限定" else 1.0)
+
+        # 攻击技能加分
+        sk2 = chara.get("skill2", {})
+        sk2_desc = sk2.get("description", "") if isinstance(sk2, dict) else chara.get("skill2_description", "")
+        has_attack_skill = bool(sk2_desc and ("威力" in sk2_desc or "攻撃" in sk2_desc))
+
+        card_score = (
+            attack * 0.5 + hp * 0.2 + speed * 0.2 + defense * 0.1
+        ) * star_mult * limit_mult * (1.3 if has_attack_skill else 1.0) * (1.0 + 0.1 * (dire_count - 1))
+
+        attr_raw = str(chara.get("attribute", "")).strip()
+        attr_match = attr_raw[1:] if attr_raw.startswith("超") else attr_raw
+
+        card_info = {
+            "card_id": str(card_id),
+            "name": chara.get("name", ""),
+            "stars": stars,
+            "attribute_raw": attr_raw,
+            "attribute_match": attr_match,
+            "attack_type": chara.get("attack_type", "物理"),
+            "side": chara.get("side", "科学"),
+            "type": chara.get("type", "battle"),
+            "limit_type": limit_type,
+            "is_fes": limit_type == "フェス限定",
+            "has_attack_skill": has_attack_skill,
+            "score": card_score,
+            "hp": hp, "attack": attack, "defense": defense, "speed": speed,
+            "attack_directions": dire_raw,
+        }
+
+        if card_info["type"] == "battle":
+            battle_cards.append(card_info)
+        else:
+            assist_cards.append(card_info)
+
+    if not battle_cards:
+        return {"success": False, "message": "没有战斗卡（Battle Card）！", "team": None}
+
+    # ===== 2. 生成所有 B×A 配对并评分 =====
+    # 同色+同攻击类型 = 最重要，大幅加分确保优先匹配
+    # 不同色不惩罚，确保仍能填满6个位置
+    all_pairs = []
+    for bi, bc in enumerate(battle_cards):
+        for ai, ac in enumerate(assist_cards):
+            pair_score = bc["score"] + ac["score"]
+
+            # 同色: 5%伤害加成 + 技能联动，大幅加分
+            if bc["attribute_match"] == ac["attribute_match"]:
+                pair_score *= 5.0
+
+            # 同攻击类型: 潜能联动，大幅加分
+            if bc["attack_type"] == ac["attack_type"]:
+                pair_score *= 4.0
+
+            # 同阵营: 势力加成
+            if bc["side"] == ac["side"]:
+                pair_score *= 1.5
+
+            # FES/限定额外加分
+            if bc["is_fes"] and ac["is_fes"]:
+                pair_score *= 1.5
+            elif bc["is_fes"] or ac["is_fes"]:
+                pair_score *= 1.2
+
+            # 双方都有攻击技能
+            if bc["has_attack_skill"] and ac["has_attack_skill"]:
+                pair_score *= 1.2
+
+            all_pairs.append({
+                "b_index": bi,
+                "b_card": bc,
+                "a_index": ai,
+                "a_card": ac,
+                "pair_score": pair_score,
+            })
+
+    # 按配对分降序排序
+    all_pairs.sort(key=lambda x: x["pair_score"], reverse=True)
+
+    # ===== 3. 贪心分配：优先高分B+A组合，尽量塞满6个位置 =====
     team_battle = [None] * 6
     team_assist = [None] * 6
-    
+
     used_battle = set()
     used_assist = set()
-    
-    for pos in range(6):
-        # 为每个位置找合适的B+A组合
-        best_battle = None
-        best_assist = None
-        
-        # 找战斗卡
-        for bc in battle_cards:
-            if bc["card_id"] in used_battle:
-                continue
-            
-            # 找匹配的支援卡（同属性、同攻击类型）
-            matching_assists = [
-                ac for ac in assist_cards
-                if ac["card_id"] not in used_assist
-                and ac["attribute"] == bc["attribute"]
-                and ac["attack_type"] == bc["attack_type"]
-            ]
-            
-            if matching_assists:
-                # FES优先
-                matching_assists.sort(key=lambda x: (not x["is_fes"], x.get("name", "")))
-                best_battle = bc
-                best_assist = matching_assists[0]
+    placed = 0
+
+    # 第一轮：分配带A卡的配对
+    for pair in all_pairs:
+        if placed >= 6:
+            break
+        if pair["b_index"] in used_battle:
+            continue
+        if pair["a_index"] in used_assist:
+            continue
+
+        team_battle[placed] = pair["b_card"]["card_id"]
+        team_assist[placed] = pair["a_card"]["card_id"]
+        used_battle.add(pair["b_index"])
+        used_assist.add(pair["a_index"])
+        placed += 1
+
+    # 第二轮：未满6个，填剩余B卡（无A卡匹配）
+    if placed < 6:
+        for bi, bc in enumerate(battle_cards):
+            if placed >= 6:
                 break
-        
-        if best_battle and best_assist:
-            team_battle[pos] = best_battle["card_id"]
-            team_assist[pos] = best_assist["card_id"]
-            used_battle.add(best_battle["card_id"])
-            used_assist.add(best_assist["card_id"])
-        elif best_battle:
-            # 只有战斗卡，没有匹配的支援卡
-            team_battle[pos] = best_battle["card_id"]
-            used_battle.add(best_battle["card_id"])
-    
-    # 如果还有空位，用剩余的战斗卡填充
-    remaining_battle = [bc for bc in battle_cards if bc["card_id"] not in used_battle]
-    for pos in range(6):
-        if team_battle[pos] is None and remaining_battle:
-            team_battle[pos] = remaining_battle[0]["card_id"]
-            used_battle.add(remaining_battle[0]["card_id"])
-            remaining_battle = remaining_battle[1:]
-    
-    # 如果还有空位，用剩余的支援卡填充
-    remaining_assist = [ac for ac in assist_cards if ac["card_id"] not in used_assist]
-    for pos in range(6):
-        if team_assist[pos] is None and remaining_assist:
-            team_assist[pos] = remaining_assist[0]["card_id"]
-            used_assist.add(remaining_assist[0]["card_id"])
-            remaining_assist = remaining_assist[1:]
-    
-    # 保存队伍
+            if bi in used_battle:
+                continue
+            team_battle[placed] = bc["card_id"]
+            used_battle.add(bi)
+            placed += 1
+
+    # 第三轮：仍未满6个，填剩余A卡到支援位（无B卡对应）
+    if placed < 6:
+        for ai, ac in enumerate(assist_cards):
+            if placed >= 6:
+                break
+            if ai in used_assist:
+                continue
+            # 找到空位
+            for pos in range(6):
+                if team_battle[pos] is not None and team_assist[pos] is None:
+                    team_assist[pos] = ac["card_id"]
+                    used_assist.add(ai)
+                    break
+
+    # ===== 4. 优化前3位置 (上场位) =====
+    # 前3位按速度排序（速度快的先出手），同时考虑攻防平衡
+    front_positions = []
+    for i in range(min(3, placed)):
+        if team_battle[i]:
+            bc = next((c for c in battle_cards if c["card_id"] == team_battle[i]), None)
+            if bc:
+                front_positions.append((i, bc))
+
+    # 按速度降序排列前3位
+    front_positions.sort(key=lambda x: x[1]["speed"], reverse=True)
+
+    # 重新排列前3位: 速度最快的在中间(position 1, 对应index 1),
+    # 第二快的在左边(position 0), 第三快的在右边(position 2)
+    if len(front_positions) >= 3:
+        speed_order = sorted(front_positions, key=lambda x: x[1]["speed"], reverse=True)
+        new_front = [speed_order[1], speed_order[0], speed_order[2]]  # [次快, 最快, 第三]
+        new_battle = [None]*3
+        new_assist = [None]*3
+        for target_idx, (orig_idx, bc) in enumerate(new_front):
+            new_battle[target_idx] = bc["card_id"]
+            new_assist[target_idx] = team_assist[orig_idx]
+        for i in range(3):
+            team_battle[i] = new_battle[i]
+            team_assist[i] = new_assist[i]
+    elif len(front_positions) >= 2:
+        speed_order = sorted(front_positions, key=lambda x: x[1]["speed"], reverse=True)
+        new_front = [speed_order[1], speed_order[0]]  # [次快, 最快]
+        new_battle = [None]*3
+        new_assist = [None]*3
+        for i in range(3):
+            new_assist[i] = team_assist[i]
+        for target_idx, (orig_idx, bc) in enumerate(new_front):
+            new_battle[target_idx] = bc["card_id"]
+            new_assist[target_idx] = team_assist[orig_idx]
+        for i in range(3):
+            team_battle[i] = new_battle[i] if new_battle[i] else team_battle[i]
+            team_assist[i] = new_assist[i] if new_assist[i] else team_assist[i]
+
+    # ===== 5. 保存队伍 =====
     team_data = {
         "battle_cards": team_battle,
         "assist_cards": team_assist
     }
     save_team_data(user_id, team_data)
-    
-    # 统计配队结果
-    matched_count = sum(1 for i in range(6) if team_battle[i] and team_assist[i])
-    fes_count = sum(1 for card_id in team_battle if card_id and 
-                    next((c for c in characters if str(c.get("card_id")) == str(card_id)), {}).get("limit_type") == "フェス限定")
-    
-    message = f"自动配队完成！\n"
-    message += f"✅ 已配置 {sum(1 for c in team_battle if c)} 张战斗卡\n"
-    message += f"✅ 已配置 {sum(1 for c in team_assist if c)} 张支援卡\n"
-    message += f"🔗 同属性同攻击类型组合: {matched_count} 组\n"
-    message += f"🔹 FES卡数量: {fes_count} 张"
-    
+    # 同步保存到预设槽位
+    auto_save_preset(user_id)
+
+    # ===== 6. 统计配队结果 =====
+    char_dict = {str(c.get("card_id")): c for c in characters}
+
+    perfect_pairs = 0
+    star3_count = 0
+    team_display = []
+    for i in range(6):
+        b_id = team_battle[i]
+        a_id = team_assist[i]
+        b_name = "空"
+        a_name = "空"
+        b_attr = a_attr = b_type = a_type = ""
+        match_info = ""
+        b_stars = a_stars = 0
+
+        if b_id:
+            b_chara = char_dict.get(str(b_id), {})
+            b_name = b_chara.get("name", str(b_id))
+            b_attr = str(b_chara.get("attribute", ""))
+            if b_attr.startswith("超"):
+                b_attr = b_attr[1:]
+            b_type = b_chara.get("attack_type", "")
+            b_stars = sum(1 for c in all_user_cards if str(c.get("card_id")) == str(b_id) and c.get("stars", 0) >= 3)
+            # Get stars from card_collection
+            for uc in all_user_cards:
+                if str(uc.get("card_id")) == str(b_id):
+                    b_stars = uc.get("stars", 0)
+                    break
+            if b_stars >= 3:
+                star3_count += 1
+
+        if a_id:
+            a_chara = char_dict.get(str(a_id), {})
+            a_name = a_chara.get("name", str(a_id))
+            a_attr = str(a_chara.get("attribute", ""))
+            if a_attr.startswith("超"):
+                a_attr = a_attr[1:]
+            a_type = a_chara.get("attack_type", "")
+            for uc in all_user_cards:
+                if str(uc.get("card_id")) == str(a_id):
+                    a_stars = uc.get("stars", 0)
+                    break
+            if a_stars >= 3:
+                star3_count += 1
+
+        if b_id and a_id:
+            if b_attr == a_attr and b_type == a_type:
+                perfect_pairs += 1
+                match_info = " ⭐完美"
+            elif b_attr == a_attr:
+                match_info = " ✓同色"
+            elif b_type == a_type:
+                match_info = " ✓同攻"
+
+        star_label = ""
+        if b_stars < 3:
+            star_label = f" [{b_stars}★]"
+        pos_label = "⚔️" if i < 3 else "🛡️"
+        team_display.append(f"  {pos_label}位{i+1}: {b_name}{star_label} + {a_name}{match_info}")
+
+    battle_count = sum(1 for c in team_battle if c)
+    assist_count = sum(1 for c in team_assist if c)
+    selected_pairs = sum(1 for i in range(6) if team_battle[i] and team_assist[i])
+
+    # Count FES
+    fes_count = 0
+    for card_id in team_battle + team_assist:
+        if card_id:
+            c = char_dict.get(str(card_id), {})
+            if c.get("limit_type") == "フェス限定":
+                fes_count += 1
+
+    total_b = len(battle_cards)
+    total_a = len(assist_cards)
+
+    message = f"🤖 AI自动配队完成！\n"
+    message += f"✅ 战斗卡: {battle_count}/6 张 (共{total_b}张可用)"
+    if battle_count < 6:
+        message += f"\n   ⚠️ 缺少战斗卡，已全部放入"
+    message += f"\n✅ 支援卡: {assist_count}/6 张 (共{total_a}张可用)"
+    message += f"\n⭐ 完美配对(同色同攻): {perfect_pairs} 组"
+    message += f"\n🌟 三星卡: {star3_count} 张"
+    message += f"\n🔗 B+A组合: {selected_pairs} 组"
+    if fes_count:
+        message += f"\n🔹 FES限定: {fes_count} 张"
+    message += f"\n📋 队伍配置:\n"
+    message += "\n".join(team_display)
+    message += f"\n💡 前3位=上场位 | 优先同色同攻 | 塞满6位"
+
     return {"success": True, "message": message, "team": team_data}

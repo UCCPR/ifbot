@@ -4,7 +4,7 @@
 # Napcat配置
 NAPCAT_HOST = "127.0.0.1"
 NAPCAT_PORT = 3000  # Napcat HTTP API端口（http.port配置项）
-NAPCAT_TOKEN = ""  # Napcat的access_token，留空则不使用
+NAPCAT_TOKEN = ""  # NapCatQQ的access_token（在Napcat的webui.json中查看），留空则不认证
 
 # Flask应用配置
 FLASK_HOST = "0.0.0.0"
@@ -18,6 +18,7 @@ PITY_LIMIT = 150  # 多少抽必出フェス限定三星
 # 呱太配置
 GACHA_COST = 300        # 单抽价格（呱太）
 GACHA10_COST = 3000     # 十连价格（呱太）
+GACHA10_COOLDOWN_SECONDS = 60  # 十连冷却时间（秒），每个用户一分钟至多抽一次十连
 GET_GACHA_REWARD = 10000  # 获取呱太奖励
 DAILY_REWARD = 30000     # 每日签到奖励（呱太）
 
@@ -49,6 +50,9 @@ NORMAL_BOX_3STAR_PROB = 3    # 正常盲盒3星概率
 GACHA_1STAR_PROB = 72   # 1星概率（权重）
 GACHA_2STAR_PROB = 23   # 2星概率（权重）
 GACHA_3STAR_PROB = 3    # 3星概率（权重）
+
+# 管理员配置
+ADMIN_QQ = "3590876913"  # 管理员QQ号，可使用管理命令
 
 # 额外配置示例（自定义添加）
 DEBUG_MODE = False  # 是否开启调试模式

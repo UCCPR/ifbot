@@ -230,7 +230,7 @@ ATTRIBUTE_ALIASES = {
 TOTAL_BATTLE_POSITIONS = 6   # 总战斗位数量
 TOTAL_ASSIST_POSITIONS = 6   # 总支援位数量
 BATTLE_POSITIONS_ON_FIELD = 3  # 场上战斗位数量
-MAX_BATTLE_ROUNDS = 30  # 最大战斗回合数
+MAX_BATTLE_ROUNDS = 12  # 最大战斗回合数
 
 # SP配置
 SP_PER_ATTACK = 15  # 攻击获得SP
@@ -258,7 +258,7 @@ ALL_AREA_LIST = [
 ALL_BUFF_LIST = [
     '盾', '矢量操作', '强制咏唱待机', '全能神', '嘲讽', '强耐', '弱耐', '不屈',
     '预测不能', '天罚', r'攻击方向\+.',
-    '必暴', r'物攻提升\(.+?\)', r'异攻提升\(.+?\)', r'物防提升\(.+?\)',
+    '必暴', '贯通', r'HP回复\(.+?\)', r'物攻提升\(.+?\)', r'异攻提升\(.+?\)', r'物防提升\(.+?\)',
     r'异防提升\(.+?\)', r'暴击防御提升\(.+?\)',
     r'暴击率提升\(.+?\)', r'回避率提升\(.+?\)', r'暴伤提升\(.+?\)',
     r'必杀威力提升\(.+?\)', r'技能威力提升\(.+?\)',
@@ -267,6 +267,7 @@ ALL_BUFF_LIST = [
 
 ALL_DEBUFF_LIST = [
     '强化妨害', '攻击提升妨害', 'HP回复妨害', '弱体化解除妨害',
+    r'强化解除(\(.+?\))?',
     r'持续被害\(.+?\)', '感电', '气绝', '移动不能', '制御不能', 'a卡封印',
     r'攻击方向\-.', '技能封印', '必杀封印',
     r'物攻下降\(.+?\)', r'异攻下降\(.+?\)', r'物防下降\(.+?\)',
@@ -305,13 +306,15 @@ class BuffEffect:
             "颜色耐性": params.COLOR_RESIST_BUFF,
             "必杀耐性": params.ULTIMATE_RESIST_BUFF,
             "颜色威力": params.COLOR_POWER_BUFF,
-            "必杀威力": params.ULTIMATE_POWER_BUFF
+            "必杀威力": params.ULTIMATE_POWER_BUFF,
+            "技能威力": params.ULTIMATE_POWER_BUFF,  # 复用必杀威力的倍率表
+            "减伤": params.COLOR_RESIST_BUFF,        # 复用颜色耐性的倍率表
         }
         if self.name in buff_maps:
             values = buff_maps[self.name].get(self.magnitude, [0, 0])
             return values[0] + values[1] * (self.level - 1)
         return 0
-    
+
     def get_extra(self) -> int:
         """获取附加数值"""
         params = BattleParams
@@ -323,7 +326,9 @@ class BuffEffect:
             "颜色耐性": params.COLOR_RESIST_BUFF,
             "必杀耐性": params.ULTIMATE_RESIST_BUFF,
             "颜色威力": params.COLOR_POWER_BUFF,
-            "必杀威力": params.ULTIMATE_POWER_BUFF
+            "必杀威力": params.ULTIMATE_POWER_BUFF,
+            "技能威力": params.ULTIMATE_POWER_BUFF,
+            "减伤": params.COLOR_RESIST_BUFF,
         }
         if self.name in buff_maps:
             values = buff_maps[self.name].get(self.magnitude, [0, 0])
@@ -426,8 +431,11 @@ class BattleUnit:
     # 当前状态
     current_hp: int = 0
     max_hp: int = 0
-    skill_cooldown: int = 0  # 技能冷却（SP是阵营共用的）
-    
+    skill_cooldown: int = 0
+    ult_cooldown: int = 0
+    assist_skill1_cd: int = 0
+    assist_skill2_cd: int = 0
+
     # 状态
     alive: bool = True
     is_broken: bool = False
@@ -460,7 +468,9 @@ class BattleUnit:
             "颜色耐性": params.COLOR_RESIST_BUFF_LIMIT,
             "必杀耐性": params.ULTIMATE_RESIST_BUFF_LIMIT,
             "颜色威力": params.COLOR_POWER_BUFF,
-            "必杀威力": params.ULTIMATE_POWER_BUFF_LIMIT
+            "必杀威力": params.ULTIMATE_POWER_BUFF_LIMIT,
+            "技能威力": [0.5, False],
+            "减伤": [0.55, False],
         }
         
         limit_mult = 1e5
@@ -705,10 +715,10 @@ class BattleSystem:
                     hp=char_data.get("hp", 1000),
                     attack=char_data.get("attack", 100),
                     defense=char_data.get("defense", 50),
-                    speed=char_data.get("speed", 100),
+                    speed=char_data.get("dexterity", 1000),  # 器用=速度
                     attribute=attribute,
                     attack_type=char_data.get("attack_type", "物理"),
-                    attack_directions=char_data.get("attack_directions", 1),
+                    attack_directions=len(char_data.get("attack_directions", [0])) if isinstance(char_data.get("attack_directions"), list) else char_data.get("attack_directions", 1),
                     side=char_data.get("side", "科学"),
                     skill=skill,
                     ultimate=ultimate,
@@ -725,18 +735,33 @@ class BattleSystem:
                 log_error(f"加载角色数据失败: {e}")
                 continue
     
+    def _get_fallback_character(self, card_id: str) -> 'Character':
+        """卡牌不在数据库时返回默认占位角色"""
+        return Character(
+            card_id=str(card_id), name=f'未知({str(card_id)[:6]})',
+            hp=10000, attack=3000, defense=2000, speed=1000,
+            attribute='红', attack_type='物理', attack_directions=1, side='科学',
+            skill=None, ultimate=None, assist_effect1=None, assist_effect2=None, passives=[]
+        )
+
+    # 卡牌信息.xlsx -> cards_completed.xlsx ID映射（仅3张不一致）
+    CARD_ID_MAP = {'780030000':'180030001','780130000':'180130001','700230001':'100235001'}
+
     def get_character(self, card_id: str) -> Optional[Character]:
-        """获取角色"""
-        return self.characters.get(str(card_id))
+        """获取角色（含旧→新ID映射）"""
+        cid = str(card_id)
+        char = self.characters.get(cid)
+        if not char and cid in self.CARD_ID_MAP:
+            char = self.characters.get(self.CARD_ID_MAP[cid])
+        return char
     
     def create_battle_unit(self, card_id: str, position: int, is_assist: bool = False) -> Optional[BattleUnit]:
-        """创建战斗单位"""
+        """创建战斗单位（找不到角色时用默认占位）"""
         character = self.get_character(card_id)
         if not character:
-            log_error(f"找不到角色: {card_id}")
-            return None
-        
-        # 复制角色数据
+            log_error(f"找不到角色: {card_id}，使用默认占位")
+            character = self._get_fallback_character(card_id)
+
         character_copy = copy.deepcopy(character)
         
         return BattleUnit(
@@ -794,15 +819,21 @@ class BattleSystem:
                         
                         battle_unit.character.attack = total_attack
                         battle_unit.character.defense = total_defense
-                        
+
+                        # 速度 = B器用 + A器用（同色增益）
+                        total_speed = battle_unit.character.speed + assist_unit.character.speed
+                        if battle_base_attr == assist_base_attr:
+                            total_speed = int(total_speed * SAME_COLOR_BONUS)
+                        battle_unit.character.speed = total_speed
+
                         # HP相加
                         total_hp = battle_unit.character.hp + assist_unit.character.hp
                         if battle_base_attr == assist_base_attr:
                             total_hp = int(total_hp * SAME_COLOR_BONUS)
-                        
+
                         battle_unit.max_hp = total_hp
                         battle_unit.current_hp = total_hp
-                        
+
                         # 合并潜能
                         battle_unit.character.passives.extend(assist_unit.character.passives)
                         
@@ -887,11 +918,11 @@ class BattleSystem:
     
     def calculate_damage(self, attacker: BattleUnit, defender: BattleUnit,
                          attack_type: str = "normal", power_rank: str = "中",
-                         power_up_count: int = 0) -> Tuple[int, bool, str]:
+                         power_up_count: int = 0) -> Tuple[int, bool, str, float, float]:
         """
         计算伤害（基于calc_dmg.py的核心公式）
-        
-        :return: (伤害值, 是否暴击, 伤害类型描述)
+
+        :return: (伤害值, 是否暴击, 伤害类型描述, 属性倍率, 伤害/面板比率)
         """
         params = BattleParams
         
@@ -919,9 +950,11 @@ class BattleSystem:
         elif attack_type == "skill":
             base_mult = params.ULTIMATE_BASE_MULTIPLIER.get(power_rank, 1.0)
             extra_attack = params.ULTIMATE_EXTRA_ATTACK.get(power_rank, 0)
-            
-            attack += extra_attack
-            attack = int(attack * base_mult)
+
+            # 技能威力buff
+            skill_mult, skill_extra = attacker.get_buff_multiplier("技能威力")
+            attack += extra_attack + skill_extra
+            attack = int(attack * (base_mult + skill_mult))
         
         # 4. 计算防御
         defense = self._calculate_defense(defender)
@@ -933,8 +966,23 @@ class BattleSystem:
         attr_mult = self._get_attribute_multiplier(attacker.character.attribute, defender.character.attribute)
         damage = int(damage * attr_mult)
         
-        # 7. 暴击（5%概率）
-        is_crit = random.random() < 0.05
+        # 7. 暴击（基础5%，暴击率buff加成，必暴则100%）
+        crit_rate = 0.05
+        crit_rate_map = {'小': 0.05, '中': 0.10, '大': 0.15, '特大': 0.20}
+        for b in attacker.buffs:
+            if b.name == '暴击率':
+                crit_rate += crit_rate_map.get(b.magnitude, 0.10)
+        for d in attacker.debuffs:
+            if d.name == '暴击率':
+                crit_rate -= crit_rate_map.get(d.magnitude, 0.10)
+        crit_rate = max(0, min(1, crit_rate))
+        is_crit = random.random() < crit_rate
+        if not is_crit:
+            for b in list(attacker.buffs):
+                if b.name == '必暴':
+                    is_crit = True
+                    attacker.buffs.remove(b)
+                    break
         if is_crit:
             crit_mult, crit_extra = attacker.get_buff_multiplier("暴伤")
             crit_def_mult, crit_def_extra = attacker.get_buff_multiplier("暴击防御")
@@ -954,7 +1002,11 @@ class BattleSystem:
         # 9. 限界1发动
         if attack_type == "ultimate" and attacker.character.ultimate and attacker.character.ultimate.limit_break_1:
             damage = int(damage * 1.1)
-        
+
+        # 10. 减伤buff
+        dmg_reduce_mult, dmg_reduce_extra = defender.get_buff_multiplier("减伤")
+        damage = int(damage * max(0, 1 - dmg_reduce_mult) - dmg_reduce_extra)
+
         # 伤害类型描述
         damage_type = "普通攻击"
         if attack_type == "skill":
@@ -969,8 +1021,11 @@ class BattleSystem:
             damage_type += " 属性克制！"
         elif attr_mult < 1.0:
             damage_type += " 属性被克制"
-        
-        return max(1, damage), is_crit, damage_type
+
+        # 伤害/面板比率 (2位小数四舍五入)
+        ratio = round(damage / attack_panel, 2) if attack_panel > 0 else 0.0
+
+        return max(1, damage), is_crit, damage_type, attr_mult, ratio
     
     def get_on_field_units(self, units: List[BattleUnit]) -> List[BattleUnit]:
         """获取场上战斗单位"""
@@ -979,43 +1034,33 @@ class BattleSystem:
         return alive_battle_units[:BATTLE_POSITIONS_ON_FIELD]
     
     def get_targets_in_direction(self, attacker: BattleUnit, enemies: List[BattleUnit], area: str = "正面") -> List[BattleUnit]:
-        """根据攻击方向和技能范围获取目标"""
-        if not enemies:
-            return []
-        
-        attacker_pos = attacker.position % 3
-        directions = attacker.character.attack_directions
-        
-        # 根据技能范围确定目标
-        if "敌全体" in area or "三方向" in area:
-            return enemies[:]
-        
-        if "范围内" in area:
-            # 范围内攻击：攻击方向数决定目标数
-            target_count = min(directions, len(enemies))
-            return enemies[:target_count]
-        
-        # 根据攻击方向确定可攻击位置
-        if directions == 1:
-            targetable_positions = [attacker_pos]
-        elif directions == 2:
-            if attacker_pos == 0:
-                targetable_positions = [0, 1]
-            elif attacker_pos == 2:
-                targetable_positions = [1, 2]
-            else:
-                targetable_positions = [0, 1]
-        else:
-            targetable_positions = [0, 1, 2]
-        
-        targets = []
-        for enemy in enemies:
-            enemy_pos = enemy.position % 3
-            if enemy_pos in targetable_positions:
-                targets.append(enemy)
-        
-        return targets if targets else enemies
-    
+        """敌全体=全打, 三方向=用箭头, 范围内=前N个"""
+        if not enemies: return []
+        if "敌全体" in area: return [e for e in enemies if e.alive]
+        dire_raw = attacker.character.attack_directions
+        if isinstance(dire_raw, list): offsets = list(dire_raw)
+        else: offsets = {1:[0],2:[-1,0],3:[-1,0,1]}.get(dire_raw,[0])
+        for b in attacker.buffs:
+            if b.name=="攻击方向+" and len(offsets)<3:
+                for o in [-1,0,1]:
+                    if o not in offsets: offsets.append(o); break
+        for d in attacker.debuffs:
+            if d.name=="攻击方向-" and len(offsets)>1: offsets=offsets[:-1]
+        pos = attacker.position % 3
+        cols = {pos+off for off in offsets if 0<=pos+off<3}
+        if not cols: return []
+        targets = [e for e in enemies if e.alive and (e.position%3) in cols]
+        if "范围内" in area: return targets[:len(offsets)]
+        return targets
+    def _get_sp_rate(self, unit: 'BattleUnit') -> float:
+        """获取SP获得倍率（SP获得量提升buff）"""
+        rate = 1.0
+        rate_map = {'小': 0.25, '中': 0.50, '大': 0.75, '特大': 1.0}
+        for b in unit.buffs:
+            if b.name == 'SP获得量':
+                rate += rate_map.get(b.magnitude, 0.50)
+        return rate
+
     def add_sp(self, side_sp: int, sp_amount: int) -> int:
         """增加阵营SP，返回新的SP值"""
         new_sp = min(SP_MAX, side_sp + sp_amount)
@@ -1027,189 +1072,404 @@ class BattleSystem:
             return True, side_sp - sp_amount
         return False, side_sp
     
-    def execute_normal_attack(self, attacker: BattleUnit, enemies: List[BattleUnit]) -> Tuple[List[str], int]:
-        """执行普通攻击，返回(战斗日志, 获得的SP)"""
+    # 特殊buff（不叠加，覆盖刷新duration）
+    SPECIAL_BUFFS = {'必暴','集中','盾','贯通','强耐','弱耐','感电','气绝','制御不能',
+                     '技能封印','必杀封印','a卡封印','持续被害',
+                     '攻击方向+','攻击方向-','移动不能','强化妨害','HP回复妨害'}
+
+    def _apply_buff(self, target, name, magnitude='中', source='', duration=0):
+        """应用buff: 特殊buff覆盖刷新, 强化妨害阻止"""
+        if name in self.SPECIAL_BUFFS:
+            for e in target.buffs:
+                if e.name == name: e.duration = max(e.duration, duration); e.magnitude = magnitude; return
+            for e in target.debuffs:
+                if e.name == name: e.duration = max(e.duration, duration); e.magnitude = magnitude; return
+        if any(d.name == '强化妨害' for d in target.debuffs): return
+        if name == '攻击' and any(d.name == '攻击提升妨害' for d in target.debuffs): return
+        target.buffs.append(BuffEffect(name=name, magnitude=magnitude, source=source, duration=duration))
+
+    def _apply_debuff(self, target, name, magnitude='中', source='', duration=0):
+        """应用debuff: 特殊buff覆盖刷新, 弱耐阻止"""
+        if name in self.SPECIAL_BUFFS:
+            for e in target.debuffs:
+                if e.name == name: e.duration = max(e.duration, duration); e.magnitude = magnitude; return
+            for e in target.buffs:
+                if e.name == name: e.duration = max(e.duration, duration); e.magnitude = magnitude; return
+        if any(b.name == '弱耐' for b in target.buffs): return
+        target.debuffs.append(BuffEffect(name=name, magnitude=magnitude, source=source, duration=duration))
+
+    def _check_tenacity(self, target: 'BattleUnit') -> bool:
+        """不屈: 免疫一次致命伤害, 小/中/大控制回血量"""
+        for b in list(target.buffs):
+            if b.name == '不屈':
+                target.buffs.remove(b)
+                heal_pct = {'小': 0.15, '中': 0.30, '大': 0.50}.get(b.magnitude, 0.30)
+                target.current_hp = max(int(target.max_hp * heal_pct), 1)
+                target.alive = True
+                if target.assist_unit: target.assist_unit.alive = True
+                return True
+        return False
+
+    def _has_pierce(self, attacker: 'BattleUnit') -> bool:
+        """检查攻击方是否有贯通（穿透盾）"""
+        return any(b.name == '贯通' for b in attacker.buffs)
+
+    def _check_shield(self, target: 'BattleUnit', attacker: 'BattleUnit') -> bool:
+        """盾: 抵挡一次非贯通伤害, 返回True表示伤害被盾抵挡"""
+        if self._has_pierce(attacker):
+            return False  # 贯通穿透盾
+        for b in list(target.buffs):
+            if b.name == '盾':
+                target.buffs.remove(b)
+                return True
+        return False
+
+    def _check_dodge(self, target: 'BattleUnit', attacker: 'BattleUnit') -> bool:
+        """回避判定：返回True=回避成功。预测不能可无视回避"""
+        if any(b.name == '预测不能' for b in attacker.buffs):
+            return False
+        dodge_rate = 0.0
+        rate_map = {'小': 0.10, '中': 0.15, '大': 0.25, '特大': 0.35}
+        for b in target.buffs:
+            if b.name == '回避率':
+                dodge_rate += rate_map.get(b.magnitude, 0.15)
+        for d in target.debuffs:
+            if d.name == '回避率':
+                dodge_rate -= rate_map.get(d.magnitude, 0.15)
+        dodge_rate = max(0, min(0.5, dodge_rate))
+        return random.random() < dodge_rate
+
+    def _handle_counter_effects(self, target: 'BattleUnit', attacker: 'BattleUnit',
+                                 damage: int) -> Tuple[int, List[str], bool]:
+        """
+        处理反击/反射/天罚效果。
+        返回 (实际对目标造成的伤害, 日志, 攻击者是否死亡)
+
+        天罚:     格挡全部伤害 + 眩晕攻击者（消耗）
+        矢量操作:  反射物理伤害
+        强制咏唱待机: 反射异能伤害
+        全能神:   反射物理+异能双重伤害
+        """
+        results = []
+        actual_damage = damage
+        attacker_died = False
+
+        # 天罚: 格挡伤害 + 眩晕攻击者（优先，消耗后不再检查其他反射）
+        for b in list(target.buffs):
+            if b.name == '天罚':
+                actual_damage = 0
+                target.buffs.remove(b)
+                self._apply_debuff(attacker, '气绝', '中', '天罚')
+                results.append(f"⚡天罚发动！{target.character.name}抵挡{damage}伤害，{attacker.character.name}被眩晕！")
+                return actual_damage, results, False
+
+        # 反射效果（不格挡伤害，额外对攻击者造成反射伤害）
+        atk_type = attacker.character.attack_type
+        for b in list(target.buffs):
+            reflect_dmg = 0
+            reflect_label = ""
+
+            if b.name == '矢量操作' and atk_type == '物理':
+                reflect_dmg = damage
+                reflect_label = "物理"
+            elif b.name == '强制咏唱待机' and atk_type == '异能':
+                reflect_dmg = damage
+                reflect_label = "异能"
+            elif b.name == '全能神':
+                reflect_dmg = damage * 2
+                reflect_label = "物理+异能"
+
+            if reflect_dmg > 0:
+                results.append(f"↩{b.name}反射！{attacker.character.name}受到{reflect_dmg}{reflect_label}伤害")
+                attacker.current_hp -= reflect_dmg
+                if attacker.current_hp <= 0:
+                    if not self._check_tenacity(attacker):
+                        attacker.current_hp = 0
+                        attacker.alive = False
+                        if attacker.assist_unit:
+                            attacker.assist_unit.alive = False
+                        results.append(f"{attacker.character.name}被反射伤害击破！")
+                        attacker_died = True
+                        break  # 攻击者死亡，停止检查
+
+        return actual_damage, results, attacker_died
+
+    def execute_normal_attack(self, attacker: BattleUnit, enemies: List[BattleUnit],
+                              allies: List[BattleUnit] = None) -> Tuple[List[str], int, int]:
+        """执行普通攻击，返回(战斗日志, 攻击方获得SP, 防守方获得SP)"""
         results = []
         targets = self.get_targets_in_direction(attacker, enemies)
-        
+
         if not targets:
-            return results, 0
-        
+            return results, 15, 0  # 无目标: 攻击方获15, 防守方获0
+
         damage_results = []
-        sp_gained = 0
+        defender_sp = 0
+        assist_sp = 0
+        has_crit_this_attack = False
+        has_damage_this_attack = False
         for target in targets:
-            damage, is_crit, damage_type = self.calculate_damage(attacker, target, "normal")
-            
+            # 回避判定
+            if self._check_dodge(target, attacker):
+                results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
+                defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+                continue
+
+            damage, is_crit, damage_type, attr_mult, ratio = self.calculate_damage(attacker, target, "normal")
+            target_name = f"({ratio:.2f}){attacker.character.name} -> {target.character.name}"
+
+            defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+
+            # 天罚/反射判定
+            damage, reflect_logs, attacker_died = self._handle_counter_effects(target, attacker, damage)
+            results.extend(reflect_logs)
+
+            # 盾判定：抵挡一次非贯通伤害
+            if self._check_shield(target, attacker):
+                results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
+                continue
+
             target.current_hp -= damage
-            sp_gained += SP_PER_DAMAGED  # 目标被攻击获得SP
-            
+            has_damage_this_attack = True
+            if is_crit:
+                has_crit_this_attack = True
+
             if target.current_hp <= 0:
-                target.current_hp = 0
-                target.alive = False
-                if target.assist_unit:
-                    target.assist_unit.alive = False
-                damage_results.append((target, damage, True))
+                if self._check_tenacity(target):
+                    results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
+                else:
+                    target.current_hp = 0; target.alive = False
+                    if target.assist_unit: target.assist_unit.alive = False
+                    results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
             else:
-                damage_results.append((target, damage, False))
-        
-        sp_gained += SP_PER_ATTACK  # 攻击者获得SP
-        
-        if damage_results:
-            target_names = "、".join([
-                f"{d[0].character.name}（{d[1]}点伤害{'，阵亡' if d[2] else ''}）"
-                for d in damage_results
-            ])
-            results.append(f"{attacker.character.name} 使用普通攻击对 {target_names}")
-        
-        return results, sp_gained
+                results.append(f"{target_name} ({damage}伤害) [{damage_type}]")
+
+        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时
+        if allies and has_damage_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
+            assist_sp += sp; results.extend(a_logs)
+        if allies and has_crit_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方暴击时')
+            assist_sp += sp; results.extend(a_logs)
+
+        attacker_sp = int(SP_PER_ATTACK * self._get_sp_rate(attacker)) + assist_sp
+
+        return results, attacker_sp, defender_sp
     
-    def execute_skill_attack(self, attacker: BattleUnit, enemies: List[BattleUnit], 
+    def execute_skill_attack(self, attacker: BattleUnit, enemies: List[BattleUnit],
                             can_use_skill: bool = True, skill_sp: int = 30,
-                            allies: List[BattleUnit] = None) -> Tuple[List[str], int, int]:
-        """执行技能攻击，返回(战斗日志, 消耗的SP, 获得的SP)"""
+                            allies: List[BattleUnit] = None) -> Tuple[List[str], int, int, int]:
+        """执行技能攻击，返回(战斗日志, 消耗的SP, 攻击方获得SP, 防守方获得SP)"""
         results = []
-        
+
         if not attacker.character.skill:
-            return self.execute_normal_attack(attacker, enemies)
-        
+            r, atk_sp, def_sp = self.execute_normal_attack(attacker, enemies, allies)
+            return r, 0, atk_sp, def_sp
+
         if not can_use_skill or skill_sp < 30:
-            return self.execute_normal_attack(attacker, enemies)
-        
+            r, atk_sp, def_sp = self.execute_normal_attack(attacker, enemies, allies)
+            return r, 0, atk_sp, def_sp
+
         if attacker.skill_cooldown > 0:
-            return self.execute_normal_attack(attacker, enemies)
-        
+            r, atk_sp, def_sp = self.execute_normal_attack(attacker, enemies, allies)
+            return r, 0, atk_sp, def_sp
+
         targets = self.get_targets_in_direction(attacker, enemies, attacker.character.skill.area)
-        
+
         if not targets:
-            return results, 0, 0
-        
-        damage_results = []
-        sp_gained = 0
+            return results, 0, 15, 0  # 无目标: 不扣SP, 攻击方获15, 防守方获0
+
+        defender_sp = 0
+        assist_sp = 0
+        has_crit_this_attack = False
+        has_damage_this_attack = False
         for target in targets:
-            damage, is_crit, damage_type = self.calculate_damage(
+            # 回避判定
+            if self._check_dodge(target, attacker):
+                results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
+                defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+                continue
+
+            damage, is_crit, damage_type, attr_mult, ratio = self.calculate_damage(
                 attacker, target, "skill", attacker.character.skill.power_rank
             )
-            
+            target_name = f"({ratio:.2f}){attacker.character.name} -> {target.character.name}"
+            defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+
+            # 天罚/反射判定
+            damage, reflect_logs, attacker_died = self._handle_counter_effects(target, attacker, damage)
+            results.extend(reflect_logs)
+
+            # 盾判定：抵挡一次非贯通伤害
+            if self._check_shield(target, attacker):
+                results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
+                continue
+
             target.current_hp -= damage
-            sp_gained += SP_PER_DAMAGED
-            
+            has_damage_this_attack = True
+            if is_crit:
+                has_crit_this_attack = True
             if target.current_hp <= 0:
-                target.current_hp = 0
-                target.alive = False
-                if target.assist_unit:
-                    target.assist_unit.alive = False
-                damage_results.append((target, damage, True))
+                if self._check_tenacity(target):
+                    results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
+                else:
+                    target.current_hp = 0; target.alive = False
+                    if target.assist_unit: target.assist_unit.alive = False
+                    results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
             else:
-                damage_results.append((target, damage, False))
-        
-        sp_gained += SP_PER_ATTACK
-        
+                results.append(f"{target_name} ({damage}伤害) [{damage_type}]")
         attacker.skill_cooldown = attacker.character.skill.cooldown
-        
-        if damage_results:
-            target_names = "、".join([
-                f"{d[0].character.name}（{d[1]}点伤害{'，阵亡' if d[2] else ''}）"
-                for d in damage_results
-            ])
-            results.append(f"{attacker.character.name} 使用技能对 {target_names}")
-        
+
         # 应用技能增益效果
         if allies:
             buff_results = self._apply_skill_effect(attacker, attacker.character.skill, allies, enemies)
             results.extend(buff_results)
-        
-        return results, 30, sp_gained
-    
+
+        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时 / 技能时
+        if allies and has_damage_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
+            assist_sp += sp; results.extend(a_logs)
+        if allies and has_crit_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方暴击时')
+            assist_sp += sp; results.extend(a_logs)
+        if allies:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '技能时')
+            assist_sp += sp; results.extend(a_logs)
+
+        attacker_sp = int(SP_PER_ATTACK * self._get_sp_rate(attacker)) + assist_sp
+
+        return results, 30, attacker_sp, defender_sp
+
     def execute_ultimate_attack(self, attacker: BattleUnit, enemies: List[BattleUnit],
                                can_use_ultimate: bool = True,
-                               allies: List[BattleUnit] = None) -> Tuple[List[str], int, int]:
-        """执行必杀技，返回(战斗日志, 消耗的SP, 获得的SP)"""
+                               allies: List[BattleUnit] = None) -> Tuple[List[str], int, int, int]:
+        """执行必杀技，返回(战斗日志, 消耗的SP, 攻击方获得SP, 防守方获得SP)"""
         results = []
-        
+
         if not attacker.character.ultimate:
-            return self.execute_skill_attack(attacker, enemies, can_use_ultimate, SP_MAX, allies)
-        
+            r, used, atk_sp, def_sp = self.execute_skill_attack(attacker, enemies, can_use_ultimate, SP_MAX, allies)
+            return r, used, atk_sp, def_sp
+
         if not can_use_ultimate:
-            return self.execute_skill_attack(attacker, enemies, True, 30, allies)
-        
+            r, used, atk_sp, def_sp = self.execute_skill_attack(attacker, enemies, True, 30, allies)
+            return r, used, atk_sp, def_sp
+
         ultimate = attacker.character.ultimate
         targets = self.get_targets_in_direction(attacker, enemies, ultimate.area)
-        
+
         if not targets:
-            return results, 0, 0
-        
+            return results, 0, 15, 0  # 无目标: 不扣SP, 攻击方获15, 防守方获0
+
         # 计算威力上升数量（强化数/弱体数）
         power_up_count = 0
         if ultimate.power_up_type == "强化数":
             power_up_count = len(attacker.buffs)
         elif ultimate.power_up_type == "弱体数":
             power_up_count = len(attacker.debuffs)
-        
+
         damage_results = []
-        sp_gained = 0
+        defender_sp = 0
+        assist_sp = 0
+        has_crit_this_attack = False
+        has_damage_this_attack = False
         for target in targets:
-            damage, is_crit, damage_type = self.calculate_damage(
+            # 回避判定
+            if self._check_dodge(target, attacker):
+                results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
+                defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+                continue
+
+            damage, is_crit, damage_type, attr_mult, ratio = self.calculate_damage(
                 attacker, target, "ultimate", ultimate.power_rank, power_up_count
             )
-            
+            target_name = f"({ratio:.2f}){attacker.character.name} -> {target.character.name}"
+            defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
+
+            # 天罚/反射判定
+            damage, reflect_logs, attacker_died = self._handle_counter_effects(target, attacker, damage)
+            results.extend(reflect_logs)
+
+            # 盾判定：抵挡一次非贯通伤害
+            if self._check_shield(target, attacker):
+                results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
+                continue
+
             target.current_hp -= damage
-            sp_gained += SP_PER_DAMAGED
-            
+            has_damage_this_attack = True
+            if is_crit:
+                has_crit_this_attack = True
             if target.current_hp <= 0:
-                target.current_hp = 0
-                target.alive = False
-                if target.assist_unit:
-                    target.assist_unit.alive = False
-                damage_results.append((target, damage, True))
+                if self._check_tenacity(target):
+                    results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
+                else:
+                    target.current_hp = 0; target.alive = False
+                    if target.assist_unit: target.assist_unit.alive = False
+                    results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
             else:
-                damage_results.append((target, damage, False))
-        
-        if damage_results:
-            target_names = "、".join([
-                f"{d[0].character.name}（{d[1]}点伤害{'，阵亡' if d[2] else ''}）"
-                for d in damage_results
-            ])
-            results.append(f"{attacker.character.name} 使用终结技对 {target_names}")
-        
+                results.append(f"{target_name} ({damage}伤害) [{damage_type}]")
+
         # 应用技能增益效果
         if allies:
             buff_results = self._apply_skill_effect(attacker, ultimate, allies, enemies)
             results.extend(buff_results)
-        
-        return results, 100, sp_gained
+
+        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时 / 必杀时
+        if allies and has_damage_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
+            assist_sp += sp; results.extend(a_logs)
+        if allies and has_crit_this_attack:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方暴击时')
+            assist_sp += sp; results.extend(a_logs)
+        if allies:
+            sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '必杀时')
+            assist_sp += sp; results.extend(a_logs)
+
+        attacker_sp = int(SP_PER_ATTACK * self._get_sp_rate(attacker)) + assist_sp
+
+        return results, 100, attacker_sp, defender_sp
     
-    def trigger_assist_effects(self, unit: BattleUnit, allies: List[BattleUnit], 
-                               enemies: List[BattleUnit], trigger_type: str = "行动开始时") -> int:
-        """触发支援卡效果，返回SP变化量"""
+    def trigger_assist_effects(self, unit: BattleUnit, allies: List[BattleUnit],
+                               enemies: List[BattleUnit], trigger_type: str = "行动开始时") -> Tuple[int, List[str]]:
+        """触发支援卡效果，返回(SP变化量, 日志列表)"""
         total_sp_gained = 0
-        
+        all_logs = []
+
         if not unit.assist_unit:
-            return 0
-        
+            return 0, []
+
+        # a卡封印: 阻止支援卡效果触发
+        if any(d.name == 'a卡封印' for d in unit.debuffs):
+            return 0, []
+
         assist_char = unit.assist_unit.character
-        
+
         # 检查效果1
         if assist_char.assist_effect1 and assist_char.assist_effect1.is_ready():
             if assist_char.assist_effect1.trigger_time == trigger_type:
-                total_sp_gained += self._apply_assist_effect(unit, assist_char.assist_effect1, allies, enemies)
+                sp, logs = self._apply_assist_effect(unit, assist_char.assist_effect1, allies, enemies)
+                total_sp_gained += sp
+                all_logs.extend(logs)
                 assist_char.assist_effect1.current_count += 1
-        
+
         # 检查效果2
         if assist_char.assist_effect2 and assist_char.assist_effect2.is_ready():
             if assist_char.assist_effect2.trigger_time == trigger_type:
-                total_sp_gained += self._apply_assist_effect(unit, assist_char.assist_effect2, allies, enemies)
+                sp, logs = self._apply_assist_effect(unit, assist_char.assist_effect2, allies, enemies)
+                total_sp_gained += sp
+                all_logs.extend(logs)
                 assist_char.assist_effect2.current_count += 1
-        
-        return total_sp_gained
+
+        return total_sp_gained, all_logs
     
     def _apply_assist_effect(self, source_unit: BattleUnit, effect: AssistEffect,
-                            allies: List[BattleUnit], enemies: List[BattleUnit]) -> int:
-        """应用支援卡效果，返回SP变化量"""
+                            allies: List[BattleUnit], enemies: List[BattleUnit]) -> Tuple[int, List[str]]:
+        """应用支援卡效果，返回(SP变化量, 日志列表)"""
         sp_gained = 0
-        
+        logs = []
+
         # 确定目标
         targets = []
-        
+
         if "自身" in effect.area:
             targets = [source_unit]
         elif "我方全体" in effect.area:
@@ -1219,47 +1479,97 @@ class BattleSystem:
         elif "同色" in effect.area:
             source_attr = self._get_base_attribute(source_unit.character.attribute)
             if "我方" in effect.area:
-                targets = [u for u in allies if not u.is_assist and u.alive and 
+                targets = [u for u in allies if not u.is_assist and u.alive and
                           self._get_base_attribute(u.character.attribute) == source_attr]
             else:
                 targets = [e for e in enemies if self._get_base_attribute(e.character.attribute) == source_attr]
         else:
             targets = [source_unit]
-        
+
         # 应用效果
-        for effect_text in effect.effects:
+        for effect_text in (effect.effects or []):
+            if not isinstance(effect_text, str): continue
             # 攻击buff
             m = re.match(r'物攻提升\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        target.buffs.append(BuffEffect(name="攻击", magnitude=magnitude, source="a卡"))
-            
+                        self._apply_buff(target, "攻击", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 攻击提升({magnitude}) [A]")
+
             # 防御buff
             m = re.match(r'物防提升\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        target.buffs.append(BuffEffect(name="防御", magnitude=magnitude, source="a卡"))
-            
+                        self._apply_buff(target, "防御", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 防御提升({magnitude}) [A]")
+
             # 暴伤buff
             m = re.match(r'暴伤提升\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        target.buffs.append(BuffEffect(name="暴伤", magnitude=magnitude, source="a卡"))
-            
+                        self._apply_buff(target, "暴伤", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 暴伤提升({magnitude}) [A]")
+
             # 必杀威力buff
             m = re.match(r'必杀威力提升\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        target.buffs.append(BuffEffect(name="必杀威力", magnitude=magnitude, source="a卡"))
-            
+                        self._apply_buff(target, "必杀威力", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 必杀威力提升({magnitude}) [A]")
+
+            # 技能威力buff
+            m = re.match(r'技能威力提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "技能威力", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 技能威力提升({magnitude}) [A]")
+
+            # 暴击率buff
+            m = re.match(r'暴击率提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "暴击率", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 暴击率提升({magnitude}) [A]")
+
+            # 回避率buff
+            m = re.match(r'回避率提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "回避率", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 回避率提升({magnitude}) [A]")
+
+            # SP获得量buff
+            m = re.match(r'SP获得量提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "SP获得量", magnitude, "a卡")
+                        logs.append(f"{target.character.name} SP获得量提升({magnitude}) [A]")
+
+            # 减伤buff
+            m = re.match(r'[^【]*减伤\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "减伤", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 减伤({magnitude}) [A]")
+
             # SP获得
             # 格式1: SP([0-9]+)上升 - 固定SP上升（如SP10上升）
             m = re.match(r'SP([0-9]+)上升', effect_text)
@@ -1302,18 +1612,66 @@ class BattleSystem:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in enemies:
-                        target.debuffs.append(BuffEffect(name="防御", magnitude=magnitude, source="a卡"))
-            
+                        self._apply_debuff(target, "防御", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 防御下降({magnitude}) [A]")
+
             # 颜色耐性debuff
             m = re.match(r'.色耐性下降\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
                 for target in targets:
                     if target in enemies:
-                        target.debuffs.append(BuffEffect(name="颜色耐性", magnitude=magnitude, source="a卡"))
-        
-        return sp_gained
-    
+                        self._apply_debuff(target, "颜色耐性", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 颜色耐性下降({magnitude}) [A]")
+
+            # 暴击率debuff
+            m = re.match(r'暴击率下降\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "暴击率", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 暴击率下降({magnitude}) [A]")
+
+            # 回避率debuff
+            m = re.match(r'回避率下降\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "回避率", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 回避率下降({magnitude}) [A]")
+
+            # 盾（支援卡）
+            if '盾' in effect_text and not re.match(r'.+\(.+\)', effect_text):
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "盾", "中", "a卡")
+                        logs.append(f"{target.character.name} 获得盾 [A]")
+
+            # 贯通（支援卡）
+            if '贯通' in effect_text and not re.match(r'.+\(.+\)', effect_text):
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "贯通", "中", "a卡")
+                        logs.append(f"{target.character.name} 获得贯通 [A]")
+
+            # HP回复（支援卡）
+            m = re.match(r'HP回复\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                heal_pcts = {'小': 0.15, '中': 0.30, '大': 0.50}
+                heal_pct = heal_pcts.get(magnitude, 0.20)
+                for t in targets:
+                    if t in allies and t.alive:
+                        if any(d.name == 'HP回复妨害' for d in t.debuffs):
+                            continue
+                        heal_amount = max(1, int(t.max_hp * heal_pct))
+                        t.current_hp = min(t.max_hp, t.current_hp + heal_amount)
+                        logs.append(f"{t.character.name} HP回复+{heal_amount} [A]")
+
+        return sp_gained, logs
+
     def _apply_skill_effect(self, attacker: BattleUnit, skill: Skill, 
                            allies: List[BattleUnit], enemies: List[BattleUnit]) -> List[str]:
         """应用技能效果，返回增益日志"""
@@ -1339,7 +1697,8 @@ class BattleSystem:
             targets = [attacker]  # 攻击者自身
         
         # 应用效果
-        for effect_text in skill.effects:
+        for effect_text in (skill.effects or []):
+            if not isinstance(effect_text, str): continue
             # 攻击buff
             m = re.match(r'物攻提升\((.+?)\)', effect_text)
             if m:
@@ -1349,7 +1708,7 @@ class BattleSystem:
                 else:
                     buff_targets = [attacker]
                 for target in buff_targets:
-                    target.buffs.append(BuffEffect(name="攻击", magnitude=magnitude, source="技能"))
+                    self._apply_buff(target, "攻击", magnitude, "技能")
                 target_names = "、".join([t.character.name for t in buff_targets])
                 results.append(f"{attacker.character.name} 对 {target_names} {effect_text}")
             
@@ -1362,7 +1721,7 @@ class BattleSystem:
                 else:
                     buff_targets = [attacker]
                 for target in buff_targets:
-                    target.buffs.append(BuffEffect(name="防御", magnitude=magnitude, source="技能"))
+                    self._apply_buff(target, "防御", magnitude, "技能")
                 target_names = "、".join([t.character.name for t in buff_targets])
                 results.append(f"{attacker.character.name} 对 {target_names} {effect_text}")
             
@@ -1375,7 +1734,7 @@ class BattleSystem:
                 else:
                     buff_targets = [attacker]
                 for target in buff_targets:
-                    target.buffs.append(BuffEffect(name="暴伤", magnitude=magnitude, source="技能"))
+                    self._apply_buff(target, "暴伤", magnitude, "技能")
                 target_names = "、".join([t.character.name for t in buff_targets])
                 results.append(f"{attacker.character.name} 对 {target_names} {effect_text}")
             
@@ -1388,12 +1747,138 @@ class BattleSystem:
                 else:
                     buff_targets = [attacker]
                 for target in buff_targets:
-                    target.buffs.append(BuffEffect(name="必杀威力", magnitude=magnitude, source="技能"))
+                    self._apply_buff(target, "必杀威力", magnitude, "技能")
                 target_names = "、".join([t.character.name for t in buff_targets])
                 results.append(f"{attacker.character.name} 对 {target_names} {effect_text}")
-        
+
+            # 技能威力buff
+            m = re.match(r'技能威力提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                buff_targets = targets if is_ally_target else [attacker]
+                for t in buff_targets:
+                    self._apply_buff(t, "技能威力", magnitude, "技能")
+                results.append(f"{attacker.character.name} 对 {'、'.join([t.character.name for t in buff_targets])} {effect_text}")
+
+            # 暴击率buff
+            m = re.match(r'暴击率提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                buff_targets = targets if is_ally_target else [attacker]
+                for t in buff_targets:
+                    self._apply_buff(t, "暴击率", magnitude, "技能")
+                results.append(f"{attacker.character.name} 对 {'、'.join([t.character.name for t in buff_targets])} {effect_text}")
+
+            # 回避率buff
+            m = re.match(r'回避率提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                buff_targets = targets if is_ally_target else [attacker]
+                for t in buff_targets:
+                    self._apply_buff(t, "回避率", magnitude, "技能")
+                results.append(f"{attacker.character.name} 对 {'、'.join([t.character.name for t in buff_targets])} {effect_text}")
+
+            # SP获得量buff
+            m = re.match(r'SP获得量提升\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                buff_targets = targets if is_ally_target else [attacker]
+                for t in buff_targets:
+                    self._apply_buff(t, "SP获得量", magnitude, "技能")
+                results.append(f"{attacker.character.name} 对 {'、'.join([t.character.name for t in buff_targets])} {effect_text}")
+
+            # 减伤buff
+            m = re.match(r'[^【]*减伤\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                buff_targets = targets if is_ally_target else [attacker]
+                for t in buff_targets:
+                    self._apply_buff(t, "减伤", magnitude, "技能")
+                results.append(f"{attacker.character.name} 对 {'、'.join([t.character.name for t in buff_targets])} {effect_text}")
+
+            # 盾
+            if '盾' in effect_text and not re.match(r'.+\(.+\)', effect_text):
+                if is_ally_target:
+                    buff_targets = targets
+                else:
+                    buff_targets = [attacker]
+                for target in buff_targets:
+                    self._apply_buff(target, "盾", "中", "技能")
+                target_names = "、".join([t.character.name for t in buff_targets])
+                results.append(f"{attacker.character.name} 对 {target_names} 【盾】")
+
+            # 贯通
+            if '贯通' in effect_text and not re.match(r'.+\(.+\)', effect_text):
+                if is_ally_target:
+                    buff_targets = targets
+                else:
+                    buff_targets = [attacker]
+                for target in buff_targets:
+                    self._apply_buff(target, "贯通", "中", "技能")
+                target_names = "、".join([t.character.name for t in buff_targets])
+                results.append(f"{attacker.character.name} 对 {target_names} 【贯通】")
+
+            # HP回复
+            m = re.match(r'HP回复\((.+?)\)', effect_text)
+            if m:
+                magnitude = m.group(1)
+                heal_pcts = {'小': 0.15, '中': 0.30, '大': 0.50}
+                heal_pct = heal_pcts.get(magnitude, 0.20)
+                if is_ally_target:
+                    heal_targets = targets
+                else:
+                    heal_targets = [attacker]
+                for t in heal_targets:
+                    if any(d.name == 'HP回复妨害' for d in t.debuffs):
+                        results.append(f"{t.character.name} HP回复被妨害！")
+                        continue
+                    heal_amount = max(1, int(t.max_hp * heal_pct))
+                    t.current_hp = min(t.max_hp, t.current_hp + heal_amount)
+                    results.append(f"{t.character.name} HP回复+{heal_amount}")
+
+            # 强化解除: 消除敌方buff（强耐可阻挡）
+            if '强化解除' in effect_text:
+                unremovable = {'弱耐', '强耐', '盾', '不屈', '天罚', '矢量操作', '强制咏唱待机', '全能神', '贯通'}
+                for enemy in enemies:
+                    if enemy.alive:
+                        blocked = False
+                        for b in list(enemy.buffs):
+                            if b.name == '强耐':
+                                enemy.buffs.remove(b)
+                                blocked = True
+                                results.append(f"{enemy.character.name} 强耐抵抗了强化解除！")
+                                break
+                        if not blocked:
+                            removed = []
+                            for b in list(enemy.buffs):
+                                if b.name not in unremovable:
+                                    enemy.buffs.remove(b)
+                                    removed.append(b.name)
+                            if removed:
+                                results.append(f"{enemy.character.name} 强化解除: {', '.join(removed)}")
+
+            # 弱体化解除: 清除我方debuff（弱体化解除妨害可阻挡）
+            if '弱体化解除' in effect_text:
+                for ally in allies:
+                    if ally.alive and not ally.is_assist:
+                        blocked = False
+                        for d in list(ally.debuffs):
+                            if d.name == '弱体化解除妨害':
+                                ally.debuffs.remove(d)
+                                blocked = True
+                                results.append(f"{ally.character.name} 弱体化解除妨害抵抗了弱体化解除！")
+                                break
+                        if not blocked:
+                            removed = []
+                            for d in list(ally.debuffs):
+                                if d.name != '弱体化解除妨害':
+                                    ally.debuffs.remove(d)
+                                    removed.append(d.name)
+                            if removed:
+                                results.append(f"{ally.character.name} 弱体化解除: {', '.join(removed)}")
+
         return results
-    
+
     def _estimate_damage(self, attacker: BattleUnit, defender: BattleUnit, 
                          attack_type: str = "normal", power_rank: str = "中") -> int:
         """预估伤害（不应用随机暴击，取平均值）"""
@@ -1480,14 +1965,24 @@ class BattleSystem:
             return "skill"
         return "normal"
     
-    def start_battle(self, player_team: dict, enemy_team: dict) -> dict:
+    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player") -> dict:
         """开始战斗"""
         log_battle("=" * 50)
         log_battle("战斗开始！")
         
         player_units = self.build_battle_team(player_team)
         enemy_units = self.build_battle_team(enemy_team)
-        
+
+        # 给角色名加位置箭头: 友方=↙↓↘, 敌方=↖↑↗
+        for u in player_units:
+            if not u.is_assist:
+                arrows = {0:'↙',1:'↓',2:'↘'}
+                u.character.name = f'{u.character.name}[{arrows[u.position%3]}]'
+        for u in enemy_units:
+            if not u.is_assist:
+                arrows = {0:'↖',1:'↑',2:'↗'}
+                u.character.name = f'{u.character.name}[{arrows[u.position%3]}]'
+
         # 阵营SP池（共用SP）
         player_sp = 0
         enemy_sp = 0
@@ -1497,207 +1992,217 @@ class BattleSystem:
         for round_num in range(1, MAX_BATTLE_ROUNDS + 1):
             round_log = [f"\n{'='*50}\n第 {round_num} 回合\n{'='*50}"]
             
-            # 刷新场上单位
-            player_on_field = self.get_on_field_units(player_units)
-            enemy_on_field = self.get_on_field_units(enemy_units)
-            
-            # 检查胜负
-            if len(player_on_field) == 0:
-                round_log.append("玩家队伍全灭！")
-                round_log.append("敌方胜利！")
-                return self._create_result("enemy", round_num, battle_log + round_log, player_units, enemy_units)
-            
-            if len(enemy_on_field) == 0:
-                round_log.append("玩家队伍胜利！")
-                round_log.append("敌方全灭！")
-                return self._create_result("player", round_num, battle_log + round_log, player_units, enemy_units)
-            
-            # ===== 回合开始前：触发双方A卡技能 =====
-            # 先手方A卡触发（奇数回合：玩家先手）
-            first_side = player_on_field if round_num % 2 == 1 else enemy_on_field
-            second_side = enemy_on_field if round_num % 2 == 1 else player_on_field
-            first_allies = player_units if round_num % 2 == 1 else enemy_units
-            second_allies = enemy_units if round_num % 2 == 1 else player_units
-            
-            for unit in first_side:
-                e = enemy_on_field if unit in player_on_field else player_on_field
-                sp_gained = self.trigger_assist_effects(unit, first_allies, e, "行动开始时")
-                if round_num % 2 == 1:
-                    player_sp = self.add_sp(player_sp, sp_gained)
-                else:
-                    enemy_sp = self.add_sp(enemy_sp, sp_gained)
-            
-            for unit in second_side:
-                e = player_on_field if unit in player_on_field else player_on_field
-                sp_gained = self.trigger_assist_effects(unit, second_allies, e, "行动开始时")
-                if round_num % 2 == 1:
-                    enemy_sp = self.add_sp(enemy_sp, sp_gained)
-                else:
-                    player_sp = self.add_sp(player_sp, sp_gained)
-            
-            # 减少冷却
+            # ===== 整回合开始：CD递减 =====
             for unit in player_units + enemy_units:
-                if unit.skill_cooldown > 0:
-                    unit.skill_cooldown -= 1
-            
-            # ===== 显示当前SP状态 =====
-            round_log.append(f"\n📊 SP状态 | 玩家: {player_sp} | 敌方: {enemy_sp}")
-            
-            # ===== 先手方全员行动（按速度排序，使用position追踪）=====
-            first_acted_positions = set()
-            first_sorted = sorted([u for u in first_side if u.alive], 
-                                 key=lambda x: x.character.speed, reverse=True)
-            
-            for unit in first_sorted:
-                if not unit.alive or unit.position in first_acted_positions:
-                    continue
-                
-                allies = first_allies
-                enemies = second_side if unit in first_side else first_side
-                if not enemies:
-                    continue
-                
-                # 检查SP并选择行动
-                can_ultimate = player_sp >= SP_MAX if unit in player_on_field else enemy_sp >= SP_MAX
-                can_skill = (player_sp >= 30 if unit in player_on_field else enemy_sp >= 30) and unit.skill_cooldown == 0
-                
-                if can_ultimate and unit.character.ultimate:
-                    # 释放大招
-                    if unit in player_on_field:
-                        player_sp = player_sp - 100
-                    else:
-                        enemy_sp = enemy_sp - 100
-                    results, used, gained = self.execute_ultimate_attack(unit, enemies, True, allies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
-                    else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    first_acted_positions.add(unit.position)
-                elif can_skill and unit.character.skill:
-                    # 释放技能
-                    if unit in player_on_field:
-                        player_sp = player_sp - 30
-                    else:
-                        enemy_sp = enemy_sp - 30
-                    results, used, gained = self.execute_skill_attack(unit, enemies, True, 30, allies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
-                    else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    first_acted_positions.add(unit.position)
-                else:
-                    # 普通攻击
-                    results, gained = self.execute_normal_attack(unit, enemies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
-                    else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    first_acted_positions.add(unit.position)
-                
-                # 刷新场上单位
-                player_on_field = self.get_on_field_units(player_units)
-                enemy_on_field = self.get_on_field_units(enemy_units)
-                
-                # 检查是否结束
-                if len(player_on_field) == 0 or len(enemy_on_field) == 0:
-                    break
-            
-            # 刷新SP显示
-            round_log.append(f"\n📊 SP状态 | 玩家: {player_sp} | 敌方: {enemy_sp}")
-            
-            # ===== 检查胜负 =====
-            player_on_field = self.get_on_field_units(player_units)
-            enemy_on_field = self.get_on_field_units(enemy_units)
-            
-            if len(player_on_field) == 0:
-                battle_log.extend(round_log)
+                if unit.skill_cooldown > 0: unit.skill_cooldown -= 1
+                if unit.ult_cooldown > 0: unit.ult_cooldown -= 1
+                if unit.assist_skill1_cd > 0: unit.assist_skill1_cd -= 1
+                if unit.assist_skill2_cd > 0: unit.assist_skill2_cd -= 1
+
+            # 检查胜负（全部6个战斗单位阵亡才结束）
+            player_alive_all = [u for u in player_units if not u.is_assist and u.alive]
+            enemy_alive_all = [u for u in enemy_units if not u.is_assist and u.alive]
+
+            if len(player_alive_all) == 0:
                 round_log.append("玩家队伍全灭！")
                 round_log.append("敌方胜利！")
                 return self._create_result("enemy", round_num, battle_log + round_log, player_units, enemy_units)
-            
-            if len(enemy_on_field) == 0:
-                battle_log.extend(round_log)
-                round_log.append("玩家队伍胜利！")
+
+            if len(enemy_alive_all) == 0:
                 round_log.append("敌方全灭！")
+                round_log.append("玩家队伍胜利！")
                 return self._create_result("player", round_num, battle_log + round_log, player_units, enemy_units)
+
+            # 刷新场上单位（前3个存活）
+            player_on_field = player_alive_all[:3]
+            player_on_field.sort(key=lambda x: x.position)
+            enemy_on_field = enemy_alive_all[:3]
+            enemy_on_field.sort(key=lambda x: x.position)
             
-            # ===== 后手方全员行动（按速度排序，可反弹）=====
-            second_acted_positions = set()
-            second_sorted = sorted([u for u in second_side if u.alive], 
-                                  key=lambda x: x.character.speed, reverse=True)
-            
-            for unit in second_sorted:
-                if not unit.alive or unit.position in second_acted_positions:
-                    continue
-                
-                allies = second_allies
-                enemies = first_side if unit in second_side else second_side
-                if not enemies:
-                    continue
-                
-                # 检查SP并选择行动
-                can_ultimate = player_sp >= SP_MAX if unit in player_on_field else enemy_sp >= SP_MAX
-                can_skill = (player_sp >= 30 if unit in player_on_field else enemy_sp >= 30) and unit.skill_cooldown == 0
-                
-                if can_ultimate and unit.character.ultimate:
-                    # 释放大招
-                    if unit in player_on_field:
-                        player_sp = player_sp - 100
+            # ===== 半回合处理 =====
+            def half_turn(side_units, side_enemies, all_units, side_sp, tag, round_log):
+                """执行半回合，返回(攻击方新SP, 防守方获得SP)"""
+                defender_sp_total = 0  # 防守方本回合被攻击获得的SP
+                # 1. 替补上场
+                # 只补到3人
+                alive_bench = sorted([u for u in all_units if not u.is_assist and u.alive and u not in side_units], key=lambda x: x.position)
+                needed = max(0, 3 - len(side_units))
+                for u in alive_bench[:needed]:
+                    side_units.append(u)
+                    round_log.append(f'  [上场] [{tag}] {u.character.name}')
+                side_units.sort(key=lambda x: x.position)
+                if not side_units: return side_sp, 0
+
+                # 2. 换位优化（移动不能的单位跳过）
+                mobile_units = [u for u in side_units if not any(d.name == '移动不能' for d in u.debuffs)]
+                immobile_units = [u for u in side_units if u not in mobile_units]
+                if len(mobile_units) == 1 and len(side_units) == 1:
+                    u = mobile_units[0]
+                    best_col, best_cnt = u.position % 3, len(self.get_targets_in_direction(u, side_enemies))
+                    for col in [0,1,2]:
+                        u.position = col
+                        cnt = len(self.get_targets_in_direction(u, side_enemies))
+                        if cnt > best_cnt: best_cnt, best_col = cnt, col
+                    if u.position % 3 != best_col:
+                        u.position = best_col
+                        for ac in all_units:
+                            if ac.is_assist and ac.position%3 == (best_col+3)%3: ac.position = best_col
+                        dir_map = {'P': {0:'↙', 1:'↓', 2:'↘'}, 'E': {0:'↖', 1:'↑', 2:'↗'}}
+                        arrow = dir_map.get(tag, {}).get(best_col, '?')
+                        round_log.append(f'  [换位] [{tag}] {u.character.name} -> {arrow}')
+                elif len(mobile_units) >= 2:
+                    from itertools import permutations
+                    # 只排列可移动单位，不可移动单位保持原位
+                    fixed_positions = {u.position % 3 for u in immobile_units}
+                    best_total = sum(len(self.get_targets_in_direction(u, side_enemies)) for u in side_units)
+                    best_assign = [(u, u.position) for u in mobile_units]
+                    available_cols = [c for c in [0,1,2] if c not in fixed_positions]
+                    if len(available_cols) >= len(mobile_units):
+                        for perm in permutations(mobile_units):
+                            saved = [(u, u.position) for u in mobile_units]
+                            for i, u in enumerate(perm): u.position = available_cols[i]
+                            total = sum(len(self.get_targets_in_direction(u, side_enemies)) for u in side_units)
+                            if total > best_total:
+                                best_total, best_assign = total, [(u, u.position) for u in perm]
+                            for u, pos in saved: u.position = pos
+                    if best_total > sum(len(self.get_targets_in_direction(u, side_enemies)) for u in side_units):
+                        for unit, new_pos in best_assign:
+                            old_pos = unit.position
+                            if old_pos == new_pos: continue
+                            for other in side_units:
+                                if other.position == new_pos: other.position, unit.position = old_pos, new_pos; break
+                            else: unit.position = new_pos
+                            for ac in all_units:
+                                if ac.is_assist:
+                                    if ac.position == old_pos: ac.position = new_pos
+                                    elif ac.position == new_pos: ac.position = old_pos
+                            dir_map = {'P': {0:'↙', 1:'↓', 2:'↘'}, 'E': {0:'↖', 1:'↑', 2:'↗'}}
+                            arrow = dir_map.get(tag, {0:'_',1:'_',2:'_'}).get(new_pos%3, '?')
+                            round_log.append(f'  [换位] [{tag}] {unit.character.name} -> {arrow}')
+                if immobile_units:
+                    for u in immobile_units:
+                        round_log.append(f'  [移动不能] [{tag}] {u.character.name} 无法换位')
+
+                # 3. A卡
+                for unit in list(side_units):
+                    if unit.alive:
+                        sp_gained, a_logs = self.trigger_assist_effects(unit, all_units, side_enemies, '行动开始时')
+                        side_sp = self.add_sp(side_sp, sp_gained)
+                        round_log.extend(a_logs)
+
+                # 3.5 持续被害（DoT）
+                dot_pcts = {'小': 0.03, '中': 0.05, '大': 0.08}
+                for unit in list(side_units):
+                    if unit.alive:
+                        for d in list(unit.debuffs):
+                            if d.name == '持续被害':
+                                dot_pct = dot_pcts.get(d.magnitude, 0.05)
+                                dot_dmg = max(1, int(unit.max_hp * dot_pct))
+                                unit.current_hp -= dot_dmg
+                                round_log.append(f'  [持续被害] {unit.character.name} -{dot_dmg}HP')
+                                if unit.current_hp <= 0:
+                                    if not self._check_tenacity(unit):
+                                        unit.current_hp = 0
+                                        unit.alive = False
+                                        if unit.assist_unit:
+                                            unit.assist_unit.alive = False
+                                        round_log.append(f'  [持续被害] {unit.character.name} 被DoT击破！')
+                                break  # 每种持续被害只触发一次
+
+                # 4. 决策
+                planned = {}
+                sp = side_sp
+                for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
+                    has_ult = bool(unit.character.ultimate) if hasattr(unit.character, 'ultimate') else False
+                    has_skill = bool(unit.character.skill) if hasattr(unit.character, 'skill') else False
+                    sealed_skill = any(d.name == '技能封印' for d in unit.debuffs)
+                    sealed_ult = any(d.name == '必杀封印' for d in unit.debuffs)
+                    sealed_assist = any(d.name == 'a卡封印' for d in unit.debuffs)
+                    if sp >= SP_MAX and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
+                        planned[id(unit)] = 'ultimate'; sp -= 100
+                    elif sp >= 30 and unit.skill_cooldown == 0 and not sealed_skill and has_skill:
+                        planned[id(unit)] = 'skill'; sp -= 30
                     else:
-                        enemy_sp = enemy_sp - 100
-                    results, used, gained = self.execute_ultimate_attack(unit, enemies, True, allies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
+                        planned[id(unit)] = 'normal'
+
+                # 6. 执行
+                for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
+                    if not unit.alive: continue
+                    stunned = any(d.name in ('感电','气绝','制御不能') for d in unit.debuffs)
+                    if stunned:
+                        for d in list(unit.debuffs):
+                            if d.name in ('感电','气绝','制御不能'): unit.debuffs.remove(d); break
+                        side_sp = self.add_sp(side_sp, 15)
+                        round_log.append(f'  [无法行动] {unit.character.name}')
+                        continue
+                    action = planned.get(id(unit), 'normal')
+                    enemies = side_enemies
+                    if action == 'ultimate':
+                        side_sp -= 100
+                        results, used, atk_sp, def_sp = self.execute_ultimate_attack(unit, enemies, True, all_units)
+                        round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
+                    elif action == 'skill':
+                        side_sp -= 30
+                        results, used, atk_sp, def_sp = self.execute_skill_attack(unit, enemies, True, 30, all_units)
+                        round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
                     else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    second_acted_positions.add(unit.position)
-                elif can_skill and unit.character.skill:
-                    # 释放技能
-                    if unit in player_on_field:
-                        player_sp = player_sp - 30
-                    else:
-                        enemy_sp = enemy_sp - 30
-                    results, used, gained = self.execute_skill_attack(unit, enemies, True, 30, allies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
-                    else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    second_acted_positions.add(unit.position)
-                else:
-                    # 普通攻击
-                    results, gained = self.execute_normal_attack(unit, enemies)
-                    round_log.extend(results)
-                    if unit in player_on_field:
-                        player_sp = self.add_sp(player_sp, gained)
-                    else:
-                        enemy_sp = self.add_sp(enemy_sp, gained)
-                    second_acted_positions.add(unit.position)
-                
-                # 刷新场上单位
-                player_on_field = self.get_on_field_units(player_units)
-                enemy_on_field = self.get_on_field_units(enemy_units)
-                
-                # 检查是否结束
-                if len(player_on_field) == 0 or len(enemy_on_field) == 0:
-                    break
-            
+                        results, atk_sp, def_sp = self.execute_normal_attack(unit, enemies, all_units)
+                        round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
+                    side_units[:] = [u for u in side_units if u.alive]
+                    side_enemies[:] = [e for e in side_enemies if e.alive]
+                    if not side_units or not side_enemies: break
+                return side_sp, defender_sp_total
+
+            # 半回合前刷新场上（替补进场由half_turn内部处理）
+            player_on_field = [u for u in player_units if not u.is_assist and u.alive][:3]
+            player_on_field.sort(key=lambda x: x.position)
+            enemy_on_field = [u for u in enemy_units if not u.is_assist and u.alive][:3]
+            enemy_on_field.sort(key=lambda x: x.position)
+
+            # 敌方行动开始时 A卡触发（Player turn前，敌方单位触发）
+            for eu in enemy_units:
+                if eu.alive and not eu.is_assist:
+                    sp_gain, a_logs = self.trigger_assist_effects(eu, enemy_units, player_on_field, '敌方行动开始时')
+                    enemy_sp = self.add_sp(enemy_sp, sp_gain)
+                    round_log.extend(a_logs)
+
+            round_log.append(f'\n[SP] player:{player_sp} enemy:{enemy_sp}')
+            round_log.append('[Player turn]')
+            player_sp, enemy_def_sp = half_turn(player_on_field, enemy_on_field, player_units, player_sp, 'P', round_log)
+            enemy_sp = self.add_sp(enemy_sp, enemy_def_sp)
+
+            # 检查全部6个单位（含替补）
+            player_alive = [u for u in player_units if not u.is_assist and u.alive]
+            enemy_alive = [u for u in enemy_units if not u.is_assist and u.alive]
+            if not player_alive:
+                round_log.append('Player all dead'); battle_log.extend(round_log)
+                return self._create_result('enemy', round_num, battle_log, player_units, enemy_units)
+            if not enemy_alive:
+                round_log.append('Enemy all dead'); battle_log.extend(round_log)
+                return self._create_result('player', round_num, battle_log, player_units, enemy_units)
+
+            # 敌方行动开始时 A卡触发（Enemy turn前，玩家单位触发）
+            for pu in player_units:
+                if pu.alive and not pu.is_assist:
+                    sp_gain, a_logs = self.trigger_assist_effects(pu, player_units, enemy_on_field, '敌方行动开始时')
+                    player_sp = self.add_sp(player_sp, sp_gain)
+                    round_log.extend(a_logs)
+
+            round_log.append('[Enemy turn]')
+            enemy_sp, player_def_sp = half_turn(enemy_on_field, player_on_field, enemy_units, enemy_sp, 'E', round_log)
+            player_sp = self.add_sp(player_sp, player_def_sp)  # 防守方(玩家)获得被攻击SP
+
+            for u in player_units + enemy_units:
+                for b in list(u.buffs):
+                    if b.duration > 0: b.duration -= 1
+                    if b.duration <= 0 and b.duration != 0: u.buffs.remove(b)
+                for d in list(u.debuffs):
+                    if d.duration > 0: d.duration -= 1
+                    if d.duration <= 0 and d.duration != 0: u.debuffs.remove(d)
+
             battle_log.extend(round_log)
-        
-        # 超时判定
-        player_hp = sum(u.current_hp for u in self.get_on_field_units(player_units))
-        enemy_hp = sum(u.current_hp for u in self.get_on_field_units(enemy_units))
-        
-        if player_hp > enemy_hp:
-            winner = "player"
-        elif enemy_hp > player_hp:
-            winner = "enemy"
-        else:
-            winner = random.choice(["player", "enemy"])
+        # 超时判定：挑战方判负
+        winner = "enemy" if challenger == "player" else "player"
         
         return self._create_result(winner, MAX_BATTLE_ROUNDS, battle_log, player_units, enemy_units)
     
