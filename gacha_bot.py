@@ -72,7 +72,7 @@ except ImportError as e:
         def get_character(self, card_id): return None
         def _get_fallback_character(self, card_id): return None
     def format_battle_result(result): return "战斗系统未加载"
-    def format_boss_result(result): return "战斗系统未加载"
+    def format_boss_result(result, include_log=False): return "战斗系统未加载"
     def get_battle_help(): return "战斗系统未加载"
 
 
@@ -123,6 +123,9 @@ try:
         GACHA_COST,
         GACHA10_COST,
         GACHA10_COOLDOWN_SECONDS,
+        GET_GACHA_COOLDOWN_SECONDS,
+        LIMITED_GACHA_COST,
+        LIMITED_GACHA_COOLDOWN_SECONDS,
         GET_GACHA_REWARD,
         DAILY_REWARD,
         # 开箱配置
@@ -167,6 +170,9 @@ except ImportError:
     GACHA_COST = 300        # 单抽价格
     GACHA10_COST = 3000     # 十连价格
     GACHA10_COOLDOWN_SECONDS = 60  # 十连冷却时间（秒）
+    GET_GACHA_COOLDOWN_SECONDS = 60  # 获取呱太冷却时间（秒）
+    LIMITED_GACHA_COST = 15000  # 限定池价格
+    LIMITED_GACHA_COOLDOWN_SECONDS = 600  # 限定池冷却 10分钟
     GET_GACHA_REWARD = 10000  # 获取呱太奖励
     DAILY_REWARD = 30000     # 每日签到奖励
     # 开箱配置
@@ -220,6 +226,8 @@ DAILY_SEND_STATS = {}  # 每日发送消息统计 {日期: 发送次数}
 DAILY_USER_SET = set()  # 今日活跃用户ID集合
 _RESTORED_DAU = 0       # 重启后从磁盘恢复的日活基准数
 GACHA10_COOLDOWN = {}  # 十连冷却时间 {user_id: last_gacha10_timestamp}
+GET_GACHA_COOLDOWN = {}  # 获取呱太冷却时间 {user_id: last_get_gacha_timestamp}
+LIMITED_GACHA_COOLDOWN = {}  # 限定池冷却时间 {user_id: last_limited_gacha_timestamp}
 BOSS_BATTLE_COOLDOWN = {}  # BOSS战冷却时间 {user_id: last_boss_battle_timestamp}
 
 
@@ -2158,8 +2166,8 @@ def handle_message():
             if f'[CQ:at,qq={self_id}]' in raw_message or f'@' in raw_message:
                 is_at = True
         
-        # 如果是群聊且没有被艾特，忽略消息
-        if group_id and not is_at:
+        # 如果是群聊且没有被艾特，忽略消息（管理员除外）
+        if group_id and not is_at and str(user_id) != str(ADMIN_QQ):
             log_info(f"群聊消息未艾特bot，忽略: {raw_message[:30]}")
             return jsonify({"status": "ignored", "reason": "not_at"})
 
@@ -2279,6 +2287,8 @@ def handle_message():
         # 支持"十连"/"单抽"/"帮助"/"获取呱太"/"签到"/"个人记录"/"兑换呱太"
         if '十连' in raw_message or 'gacha10' in raw_message.lower():
             return handle_gacha(10, user_id, group_id, message_id)
+        elif '限定十连' in raw_message or '限定池' in raw_message:
+            return handle_limited_gacha(user_id, group_id)
         elif '单抽' in raw_message or 'gacha' in raw_message.lower():
             return handle_gacha(1, user_id, group_id, message_id)
         elif '帮助' in raw_message or 'help' in raw_message.lower():
@@ -2564,6 +2574,180 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
 
     except Exception as e:
         log_error(f"抽卡处理失败: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def handle_limited_gacha(user_id: str, group_id):
+    """
+    限定池十连：15000呱太，至少必出一个FES限定或期間限定
+    每用户10分钟CD
+    """
+    try:
+        cost = LIMITED_GACHA_COST
+        count = 10
+
+        # 检查呱太
+        current_gacha = get_gacha_count(user_id)
+        if current_gacha < cost:
+            reply = f"呱太不足！当前呱太: {current_gacha}，需要: {cost}。请艾特我发送「获取呱太」获得{GET_GACHA_REWARD}呱太~"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            log_info(f"限定池失败 [{user_id}]: 呱太不足 {current_gacha}/{cost}")
+            return jsonify({"status": "error", "message": "呱太不足", "current_gacha": current_gacha, "required_gacha": cost})
+
+        # 冷却检查（10分钟）
+        now_ts = datetime.now().timestamp()
+        last_limited = LIMITED_GACHA_COOLDOWN.get(user_id, 0)
+        remaining = LIMITED_GACHA_COOLDOWN_SECONDS - (now_ts - last_limited)
+        if remaining > 0:
+            mins = int(remaining // 60)
+            secs = int(remaining % 60)
+            reply = f"限定池冷却中！请等待 {mins}分{secs}秒后再试~"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            log_info(f"限定池冷却 [{user_id}]: 还需 {mins}分{secs}秒")
+            return jsonify({"status": "cooldown", "message": "限定池冷却中", "remaining_seconds": int(remaining)})
+
+        # 消耗呱太 + 记录冷却
+        spend_gacha(user_id, cost)
+        LIMITED_GACHA_COOLDOWN[user_id] = now_ts
+
+        # 加载角色
+        characters = get_characters()
+        if not characters:
+            return jsonify({"status": "error", "message": "无法加载角色数据"})
+
+        # 检查保底
+        pity_data = load_pity_data(user_id)
+        fes_pity_count = pity_data.get("fes_pity_count", 0)
+        is_fes_pity = fes_pity_count >= PITY_LIMIT
+
+        # 抽取10个盲盒
+        boxes = []
+        has_limited = False
+        for i in range(count):
+            is_pity_draw = is_fes_pity and (i == count - 1)
+            box = draw_mystery_box(characters, user_id, is_pity_draw)
+            # 检查是否已经是FES/期间限定
+            if not box.get("is_mystery"):
+                char = box.get("character", {})
+                if char.get("stars") == 3 and char.get("limit_type", "") in ("フェス限定", "期間限定"):
+                    has_limited = True
+            else:
+                # 黑盒可能开出3星限定
+                pass
+            boxes.append(box)
+
+        # 限定保底：如果没有FES/期间限定，替换最后一个非保底盲盒
+        if not has_limited and not is_fes_pity:
+            limited_chars = [c for c in characters if c["stars"] == 3 and c.get("limit_type", "") in ("フェス限定", "期間限定")]
+            if limited_chars:
+                # 从后往前找可替换的盲盒（优先替换1星）
+                replace_idx = -1
+                for i in range(len(boxes) - 1, -1, -1):
+                    if boxes[i].get("stars") == 1 and not boxes[i].get("is_mystery"):
+                        replace_idx = i
+                        break
+                if replace_idx < 0:
+                    # 没有1星，找2星
+                    for i in range(len(boxes) - 1, -1, -1):
+                        if not boxes[i].get("is_mystery") and boxes[i].get("stars") != 3:
+                            replace_idx = i
+                            break
+                if replace_idx < 0:
+                    replace_idx = count - 1  # fallback: 最后一个
+
+                boxes[replace_idx] = {
+                    "stars": 3,
+                    "is_mystery": False,
+                    "character": random.choice(limited_chars)
+                }
+                log_info(f"限定池保底触发 [{user_id}]: 替换第{replace_idx+1}个盲盒为限定3星")
+
+        # 创建盲盒会话
+        create_box_session(user_id, boxes)
+        BOX_SESSIONS[user_id]["characters"] = characters
+        BOX_SESSIONS[user_id]["is_fes_pity"] = is_fes_pity
+
+        # 生成盲盒图片
+        box_images = []
+        for box in boxes:
+            img_bytes = create_box_card(box, characters)
+            if img_bytes:
+                box_images.append(Image.open(BytesIO(img_bytes)))
+
+        if not box_images:
+            clear_box_session(user_id)
+            return jsonify({"status": "error", "message": "生成盲盒图片失败"})
+
+        card_width, card_height = box_images[0].size
+        gap = 10
+        cols = 5
+        rows = 2
+        cards_total_width = card_width * cols + gap * (cols - 1)
+        cards_total_height = card_height * rows + gap * (rows - 1)
+
+        bg_path = None
+        for bg_name in ["gacha_tmb_bg_10.png", "gacha_tmb_10_bg.png", "gacha_bg_10.png"]:
+            test_path = LEVEL_DIR / bg_name
+            if test_path.exists():
+                bg_path = str(test_path)
+                break
+
+        output = None
+        if bg_path:
+            bg_img = Image.open(bg_path).convert('RGB')
+            bg_w, bg_h = bg_img.size
+            final_w = int(bg_w * 2.0 * 0.264)
+            final_h = int(bg_h * 2.0 * 0.264)
+            bg_img_resized = bg_img.resize((final_w, final_h), Image.Resampling.LANCZOS)
+            output = Image.new('RGB', (final_w, final_h), (50, 50, 50))
+            output.paste(bg_img_resized, (0, 0))
+            cards_x = (final_w - cards_total_width) // 2
+            cards_y = (final_h - cards_total_height) // 2
+        else:
+            pad = 20
+            final_w = cards_total_width + pad * 2
+            final_h = cards_total_height + pad * 2
+            output = Image.new('RGB', (final_w, final_h), (40, 35, 50))
+            cards_x = pad
+            cards_y = pad
+
+        for i, img in enumerate(box_images):
+            col = i % cols
+            row = i // cols
+            x = cards_x + col * (card_width + gap)
+            y = cards_y + row * (card_height + gap)
+            output.paste(img.resize((card_width, card_height), Image.Resampling.LANCZOS), (x, y))
+
+        output_idx = random.randint(1000, 9999)
+        img_path = OUTPUT_DIR / f"limited_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.jpg"
+        output.convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
+
+        current_gacha = get_gacha_count(user_id)
+        total_draws = get_total_draws(user_id)
+        prompt_text = f"🎯 限定池十连 (消耗{cost}呱太) | 余额: {current_gacha}呱太 | 累计: {total_draws}抽"
+
+        at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+        with open(img_path, "rb") as f:
+            image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
+        img_message = f"[CQ:image,file=base64://{image_base64}]"
+
+        full_message = f"{at_message}{prompt_text}\n{img_message}"
+        send_message(full_message, user_id, group_id)
+
+        try:
+            os.remove(img_path)
+        except:
+            pass
+
+        log_info(f"限定池 [{user_id}]: 10盲盒已生成")
+        return jsonify({"status": "success", "box_count": count, "message": prompt_text})
+
+    except Exception as e:
+        log_error(f"限定池处理失败: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -2923,8 +3107,27 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
 
 
 def handle_get_gacha(user_id: str, group_id):
-    """处理获取呱太请求"""
+    """处理获取呱太请求（每分钟限1次）"""
     try:
+        # 冷却检查
+        now_ts = datetime.now().timestamp()
+        last_get = GET_GACHA_COOLDOWN.get(user_id, 0)
+        remaining = GET_GACHA_COOLDOWN_SECONDS - (now_ts - last_get)
+        if remaining > 0:
+            reply = f"获取呱太冷却中！请等待 {int(remaining)} 秒后再试~"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            log_info(f"获取呱太冷却 [{user_id}]: 还需等待 {int(remaining)} 秒")
+            return jsonify({
+                "status": "cooldown",
+                "message": "获取呱太冷却中",
+                "remaining_seconds": int(remaining)
+            })
+
+        # 记录冷却时间戳
+        GET_GACHA_COOLDOWN[user_id] = now_ts
+
         # 添加呱太
         new_gacha = add_gacha(user_id, GET_GACHA_REWARD)
         
@@ -3731,10 +3934,13 @@ def handle_boss_battle(user_id: str, group_id, raw_message: str):
                 "remaining_seconds": int(remaining)
             })
 
-        # 从config获取BOSS卡牌ID
+        # 从config获取BOSS卡牌ID（支持热切换，每次reload）
         try:
-            from config import BOSS_CARD_ID
-        except ImportError:
+            import importlib
+            import config
+            importlib.reload(config)
+            BOSS_CARD_ID = getattr(config, 'BOSS_CARD_ID', '100430006')
+        except Exception:
             BOSS_CARD_ID = "100430006"  # 默认
 
         # 加载玩家队伍
@@ -4378,7 +4584,7 @@ def handle_battle_log(user_id: str, group_id):
 
         # 判断是BOSS战还是普通战斗，使用对应的格式化函数
         if "boss_name" in result:
-            log_text = format_boss_result(result)
+            log_text = format_boss_result(result, include_log=True)
         else:
             log_text = format_battle_result(result)
         # 压缩空行
@@ -4780,6 +4986,7 @@ def handle_help(user_id: str, group_id):
 ╠══════════════════════════════╣
 ║ 单抽  - ({GACHA_COST}呱太) ║
 ║ 十连  - ({GACHA10_COST}呱太) ║
+║ 限定十连 - ({LIMITED_GACHA_COST}呱太,必出限定) ║
 ║ 获取呱太 - 获得{GET_GACHA_REWARD}呱太   ║
 ║ 签到  - 每日签到({DAILY_REWARD}呱太)  ║
 ║ 个人记录 - 查看个人统计    ║

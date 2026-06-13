@@ -1656,6 +1656,15 @@ class BattleSystem:
                         self._apply_buff(target, "贯通", "中", "a卡")
                         logs.append(f"{target.character.name} 获得贯通 [A]")
 
+            # 不屈（支援卡）
+            m = re.match(r'不屈(?:\((.+?)\))?', effect_text)
+            if m:
+                magnitude = m.group(1) or "中"
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "不屈", magnitude, "a卡")
+                        logs.append(f"{target.character.name} 获得不屈({magnitude}) [A]")
+
             # HP回复（支援卡）
             m = re.match(r'HP回复\((.+?)\)', effect_text)
             if m:
@@ -1817,6 +1826,19 @@ class BattleSystem:
                     self._apply_buff(target, "贯通", "中", "技能")
                 target_names = "、".join([t.character.name for t in buff_targets])
                 results.append(f"{attacker.character.name} 对 {target_names} 【贯通】")
+
+            # 不屈
+            m = re.match(r'不屈(?:\((.+?)\))?', effect_text)
+            if m:
+                magnitude = m.group(1) or "中"
+                if is_ally_target:
+                    buff_targets = targets
+                else:
+                    buff_targets = [attacker]
+                for target in buff_targets:
+                    self._apply_buff(target, "不屈", magnitude, "技能")
+                target_names = "、".join([t.character.name for t in buff_targets])
+                results.append(f"{attacker.character.name} 对 {target_names} 【不屈】({magnitude})")
 
             # HP回复
             m = re.match(r'HP回复\((.+?)\)', effect_text)
@@ -2118,9 +2140,10 @@ class BattleSystem:
                     sealed_skill = any(d.name == '技能封印' for d in unit.debuffs)
                     sealed_ult = any(d.name == '必杀封印' for d in unit.debuffs)
                     sealed_assist = any(d.name == 'a卡封印' for d in unit.debuffs)
-                    if sp >= SP_MAX and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
+                    has_targets = bool(self.get_targets_in_direction(unit, side_enemies))
+                    if has_targets and sp >= SP_MAX and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
                         planned[id(unit)] = 'ultimate'; sp -= 100
-                    elif sp >= 30 and unit.skill_cooldown == 0 and not sealed_skill and has_skill:
+                    elif has_targets and sp >= 30 and unit.skill_cooldown == 0 and not sealed_skill and has_skill:
                         planned[id(unit)] = 'skill'; sp -= 30
                     else:
                         planned[id(unit)] = 'normal'
@@ -2342,8 +2365,12 @@ def format_battle_result(result: dict) -> str:
 
 
 # ========== BOSS战结果格式化 ==========
-def format_boss_result(result: dict) -> str:
-    """格式化BOSS战结果"""
+def format_boss_result(result: dict, include_log: bool = False) -> str:
+    """格式化BOSS战结果
+
+    :param result: BOSS战结果字典
+    :param include_log: 是否包含详细回合日志（战斗日志命令时使用）
+    """
     boss_name = result.get("boss_name", "???")
     boss_start = result.get("boss_starting_hp", 15000000)
     boss_end = result.get("boss_ending_hp", 0)
@@ -2372,7 +2399,20 @@ def format_boss_result(result: dict) -> str:
     lines.append(f"  战斗回合: {rounds}/12")
     lines.append(f"  玩家存活: {survived}/{total}")
 
+    # 详细回合日志
+    if include_log and result.get("log"):
+        lines.append("")
+        lines.append("=" * 40)
+        lines.append("      详细战斗日志")
+        lines.append("=" * 40)
+        for log_line in result["log"]:
+            if log_line.startswith("\n") and ("回合" in log_line):
+                lines.append(log_line)
+            elif not log_line.startswith("📊"):
+                lines.append(log_line)
+
     # 玩家队伍状态
+    lines.append("")
     lines.append("-" * 40)
     lines.append("  玩家队伍:")
     player_units = [u for u in result.get("player_units", []) if not u.get("is_assist")]
