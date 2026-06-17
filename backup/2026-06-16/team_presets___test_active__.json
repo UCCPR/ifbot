@@ -1,0 +1,29 @@
+{
+  "presets": [
+    {
+      "battle_cards": [
+        "c1",
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "assist_cards": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cycle": 0,
+  "active_slot": 1
+}

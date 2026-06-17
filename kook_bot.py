@@ -946,7 +946,7 @@ def get_characters():
     global CHARACTERS
     if not CHARACTERS:
         load_characters()
-    return list(CHARACTERS.values())
+    return CHARACTERS
 
 def generate_ai_team(difficulty=2):
     """
@@ -963,7 +963,8 @@ def generate_ai_team(difficulty=2):
     
     import random
     battle_cards = []
-    available = [c for c in characters if c.get("type") == "battle"]
+    chars_list = list(characters.values()) if isinstance(characters, dict) else characters
+    available = [c for c in chars_list if c.get("type") == "battle"]
     
     for i in range(6):
         if available:
@@ -973,7 +974,7 @@ def generate_ai_team(difficulty=2):
                 available = [c for c in available if c["id"] != card["id"]]
     
     assist_cards = []
-    available_assist = [c for c in characters if c.get("type") == "assist"]
+    available_assist = [c for c in chars_list if c.get("type") == "assist"]
     for i in range(6):
         if available_assist:
             card = random.choice(available_assist)
@@ -1283,6 +1284,11 @@ def send_kook_card_message(channel_id, card, quote_msg_id=None):
     url = f"{KOOK_API_URL}/message/create"
     headers = {"Authorization": f"Bot {CONFIG['BOT_TOKEN']}"}
     
+    # 确保卡片格式正确
+    if not isinstance(card, dict) or card.get("type") != "card":
+        log_error("无效的卡片格式")
+        return False
+    
     data = {
         "channel_id": channel_id,
         "type": 10,
@@ -1294,15 +1300,51 @@ def send_kook_card_message(channel_id, card, quote_msg_id=None):
         data["quote"] = quote_msg_id
     
     try:
+        log_info(f"发送卡片消息到频道 {channel_id}")
+        log_info(f"卡片数据: {json.dumps(card, ensure_ascii=False)[:500]}...")
+        
         response = requests.post(url, headers=headers, json=data)
+        log_info(f"API响应状态码: {response.status_code}")
+        
         if response.status_code == 200:
-            return True
+            result = response.json()
+            if result.get("code") == 0:
+                log_info("卡片消息发送成功")
+                return True
+            else:
+                log_error(f"发送卡片消息失败: {result.get('message', '未知错误')}")
+                # 尝试回退到普通文本消息
+                text_content = parse_card_to_text(card)
+                send_kook_message(channel_id, text_content, quote_msg_id=quote_msg_id)
+                return False
         else:
-            log_error(f"发送卡片消息失败: {response.text}")
+            log_error(f"发送卡片消息失败，HTTP状态码: {response.status_code}, 响应: {response.text}")
+            # 尝试回退到普通文本消息
+            text_content = parse_card_to_text(card)
+            send_kook_message(channel_id, text_content, quote_msg_id=quote_msg_id)
             return False
     except Exception as e:
         log_error(f"发送卡片消息异常: {e}")
+        import traceback
+        log_error(f"异常堆栈: {traceback.format_exc()}")
         return False
+
+def parse_card_to_text(card):
+    """将卡片消息转换为普通文本消息"""
+    text_parts = []
+    
+    # 获取标题
+    for module in card.get("modules", []):
+        if module.get("type") == "header":
+            text = module.get("text", {}).get("content", "")
+            if text:
+                text_parts.append(text)
+        elif module.get("type") == "section":
+            text = module.get("text", {}).get("content", "")
+            if text:
+                text_parts.append(text)
+    
+    return "\n".join(text_parts)
 
 def create_kook_card(title, description, fields=None, color="#0099ff"):
     card = {
@@ -1809,6 +1851,25 @@ def find_attribute_icon(attribute: str) -> str:
         return None
     
     attr_name = str(attribute).strip()
+    
+    # 中日文属性名称映射
+    attr_mapping = {
+        "红": "赤",
+        "绿": "緑",
+        "蓝": "青",
+        "黄": "黄",
+        "紫": "紫",
+        "超红": "超赤",
+        "超绿": "超緑",
+        "超蓝": "超青",
+        "超黄": "超黄",
+        "超紫": "超紫"
+    }
+    
+    # 尝试映射后的名称
+    if attr_name in attr_mapping:
+        attr_name = attr_mapping[attr_name]
+    
     patterns = [
         f"common_tmb_label_element_{attr_name}.png",
         f"attr_{attr_name}.png",
@@ -1888,8 +1949,8 @@ def composite_card(card: dict) -> bytes:
         inner_frame_img = Image.open(frame_path).convert('RGBA')
         char_img = Image.open(icon_path).convert('RGBA')
         
-        # 加载属性图标
-        attribute = card.get("attribute")
+        # 加载属性图标（注意：角色数据中属性字段是element）
+        attribute = card.get("element") or card.get("attribute")
         attr_icon_path = find_attribute_icon(attribute) if attribute else None
         attr_img = None
         if attr_icon_path and os.path.exists(attr_icon_path):
@@ -2369,16 +2430,24 @@ def handle_command(raw_message, user_id, channel_id, nickname, msg_id=None):
         handle_collection(user_id, channel_id, msg_id)
     elif '保底' in cmd:
         handle_pity(user_id, channel_id, msg_id)
-    elif '余额' in cmd or '呱太' in cmd:
-        handle_balance(user_id, channel_id, msg_id)
-    elif '资料' in cmd:
-        handle_profile(user_id, channel_id, nickname, msg_id)
     elif '重新加载' in cmd and user_id == CONFIG["OWNER_ID"]:
         handle_reload(user_id, channel_id, msg_id)
     elif '备份' in cmd and user_id == CONFIG["OWNER_ID"]:
         handle_backup(user_id, channel_id, msg_id)
     elif '备份战斗录' in cmd and user_id == CONFIG["OWNER_ID"]:
         handle_backup_battle_logs(user_id, channel_id, msg_id)
+    elif '呱太' in cmd and user_id == CONFIG["OWNER_ID"]:
+        handle_admin_gacha(user_id, channel_id, cmd, msg_id)
+    elif '蓝碎片' in cmd and user_id == CONFIG["OWNER_ID"]:
+        handle_admin_blue_crystal(user_id, channel_id, cmd, msg_id)
+    elif '红碎片' in cmd and user_id == CONFIG["OWNER_ID"]:
+        handle_admin_red_crystal(user_id, channel_id, cmd, msg_id)
+    elif '清空数据' in cmd and user_id == CONFIG["OWNER_ID"]:
+        handle_admin_clear_data(user_id, channel_id, cmd, msg_id)
+    elif '余额' in cmd or '呱太' in cmd:
+        handle_balance(user_id, channel_id, msg_id)
+    elif '资料' in cmd:
+        handle_profile(user_id, channel_id, nickname, msg_id)
 
 def update_pity(user_id: str, got_3star: bool = False, is_fes_3star: bool = False):
     """更新用户的抽卡记录（与QQ版完全一致）"""
@@ -2528,9 +2597,14 @@ def handle_gacha(count, user_id, channel_id, msg_id=None):
         fes_pity_text = "🎉 触发FES保底，今日时运为man！\n"
     
     current_gacha = user_data["gacha"]
-    total_draws = pity_data.get("total_gacha", 0)
-    total_3stars = user_data.get("fes_count", 0) + user_data.get("period_count", 0) + user_data.get("other_3star_count", 0)
+    total_draws = pity_data.get("total_draws", 0)
+    total_3stars = pity_data.get("total_3stars", 0)
     remaining_pity = get_remaining_pity(user_id)
+    
+    # 更新十连冷却时间
+    if count == 10:
+        pity_data["last_ten_gacha"] = datetime.now().timestamp()
+        save_pity_data(user_id)
     
     info_text = (
         f"当前呱太: {current_gacha}\n"
@@ -2538,7 +2612,9 @@ def handle_gacha(count, user_id, channel_id, msg_id=None):
         f"累计3星: {total_3stars}\n"
         f"距离FES保底: {remaining_pity}次\n"
     )
-    prompt_text = f"{fes_pity_text}{info_text}\n请输入「/开 编号」开启盲盒，如「/开 1」或「/开 全部开」"
+    
+    action_text = f"🎯 {'十连' if count == 10 else '单抽'} (消耗{cost}呱太)"
+    prompt_text = f"{action_text}\n{fes_pity_text}{info_text}\n请输入「/开 编号」开启盲盒，如「/开 1」或「/开 全部开」"
     
     send_kook_message_with_image(channel_id, prompt_text, output, quote_msg_id=msg_id)
 
@@ -2928,7 +3004,7 @@ def handle_team(user_id, channel_id, raw_message, msg_id=None):
             return
         
         card = user_cards[card_idx - 1]
-        if set_team_card(user_id, position, str(card["id"]), "battle"):
+        if set_team_card(user_id, position, str(card["card_id"]), "battle"):
             send_kook_message(channel_id, f"位置{position}已设置为: {card['name']}", quote_msg_id=msg_id)
         else:
             send_kook_message(channel_id, "设置失败！", quote_msg_id=msg_id)
@@ -2985,109 +3061,191 @@ def handle_defense_team(user_id, channel_id, raw_message=None, msg_id=None):
     defense_info = get_defense_team_info(user_id, CHARACTERS)
     send_kook_message(channel_id, defense_info, quote_msg_id=msg_id)
 
+def generate_personal_record_image(user_id, user_data, pity_data, three_stars):
+    """生成个人记录图片（参照QQ版）"""
+    try:
+        # 获取用户的三星卡详情
+        display_cards = []
+        for card in three_stars[:10]:  # 最多显示10张
+            card_id = str(card.get("id", ""))
+            chara = CHARACTERS.get(card_id)
+            if chara:
+                display_cards.append({"chara": chara, "count": 1})
+        
+        if not display_cards:
+            return None
+        
+        # 创建卡牌图片列表
+        card_imgs = []
+        for item in display_cards:
+            card_bytes = composite_card(item["chara"])
+            if card_bytes:
+                card_img = Image.open(BytesIO(card_bytes))
+                card_imgs.append({"img": card_img, "count": item["count"]})
+        
+        if not card_imgs:
+            return None
+        
+        # 使用十连背景图
+        bg_path = None
+        for bg_name in ["gacha_tmb_bg_10.png", "gacha_tmb_10_bg.png", "gacha_bg_10.png"]:
+            test_path = LEVEL_DIR / bg_name
+            if test_path.exists():
+                bg_path = str(test_path)
+                break
+        
+        if bg_path:
+            bg_img = Image.open(bg_path).convert('RGB')
+            bg_w, bg_h = bg_img.size
+            # 与QQ版一致：final_w = int(bg_w * 1.5 * 0.264)
+            final_w = int(bg_w * 1.5 * 0.264)
+            final_h = int(bg_h * 1.5 * 0.264)
+            bg = bg_img.resize((final_w, final_h), Image.Resampling.LANCZOS)
+            bg_w, bg_h = final_w, final_h
+        else:
+            bg = Image.new('RGB', (600, 400), (50, 50, 50))
+            bg_w, bg_h = bg.size
+        
+        max_card_width = 90
+        max_card_height = 120
+        gap = 18
+        cols = min(len(card_imgs), 5)
+        rows = (len(card_imgs) + cols - 1) // cols
+        
+        first_card = card_imgs[0]["img"]
+        orig_w, orig_h = first_card.size
+        scale = min(max_card_width / orig_w, max_card_height / orig_h)
+        card_width = int(orig_w * scale)
+        card_height = int(orig_h * scale)
+        
+        total_w = cols * (card_width + gap) - gap
+        total_h = rows * (card_height + gap) - gap
+        start_x = (bg_w - total_w) // 2
+        start_y = (bg_h - total_h) // 2
+        
+        # 创建最终画布
+        output = Image.new('RGB', (bg_w, bg_h), (50, 50, 50))
+        output.paste(bg, (0, 0))
+        
+        for i, item in enumerate(card_imgs):
+            img = item["img"]
+            count = item["count"]
+            col = i % cols
+            row = i // cols
+            x = start_x + col * (card_width + gap)
+            y = start_y + row * (card_height + gap)
+            
+            img_copy = img.copy()
+            img_copy.thumbnail((card_width, card_height), Image.Resampling.LANCZOS)
+            thumb_w, thumb_h = img_copy.size
+            
+            paste_x = x + (card_width - thumb_w) // 2
+            paste_y = y + (card_height - thumb_h) // 2
+            
+            output.paste(img_copy, (paste_x, paste_y))
+            
+            # 如果计数大于1，在右下角添加计数标记
+            if count > 1:
+                draw = ImageDraw.Draw(output)
+                badge_w = 30
+                badge_h = 20
+                badge_x = paste_x + thumb_w - badge_w - 2
+                badge_y = paste_y + thumb_h - badge_h - 2
+                draw.rounded_rectangle([badge_x, badge_y, badge_x+badge_w, badge_y+badge_h], radius=4, fill=(0, 0, 200))
+                
+                try:
+                    font = ImageFont.truetype("arial.ttf", 12)
+                except:
+                    font = ImageFont.load_default()
+                text = f"x{count}"
+                draw.text((badge_x + 5, badge_y + 3), text, fill=(255, 255, 255), font=font)
+        
+        # 保存图片
+        output_idx = random.randint(1000, 9999)
+        img_path = OUTPUT_DIR / f"personal_3stars_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
+        output.convert('RGB').save(img_path, format='PNG', optimize=True)
+        
+        return str(img_path)
+    except Exception as e:
+        log_error(f"生成个人记录图片失败: {e}")
+        return None
+
 def handle_personal_info(user_id, channel_id, msg_id=None):
     """显示个人记录（与QQ版一致）"""
-    user_data = load_user_data(user_id)
-    pity_data = load_pity_data(user_id)
-    
-    cards = user_data["cards"]
-    three_stars = [c for c in cards if c["rarity"] == 3]
-    
-    # 计算保底进度
-    fes_pity_remaining = max(0, CONFIG["PITY_LIMIT"] - pity_data.get("fes_pity_count", 0))
-    
-    # 统计限定卡数量
-    fes_count = user_data.get("fes_count", 0)
-    period_count = user_data.get("period_count", 0)
-    other_3star_count = user_data.get("other_3star_count", 0)
-    
-    # 战力
-    power = calculate_power(user_id)
-    
-    card = create_kook_card("📊 个人记录", "")
-    
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": "🐸 资源"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   呱太: {user_data['gacha']}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   红色碎片: {user_data.get('red_crystal', 0)}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   蓝色碎片: {user_data.get('blue_crystal', 0)}"}
-    })
-    
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": "\n🎫 抽卡统计"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   累计抽卡: {pity_data.get('total_gacha', 0)}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   三星总数: {pity_data.get('total_3stars', 0)}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   保底进度: {fes_pity_remaining}/{CONFIG['PITY_LIMIT']}"}
-    })
-    
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": "\n⭐ 卡牌收藏"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   卡牌总数: {len(cards)}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   三星卡牌: {len(three_stars)}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   フェス限定: {fes_count}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   期間限定: {period_count}"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   其他三星: {other_3star_count}"}
-    })
-    
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": "\n⚔️ 战力"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   总战力: {power}"}
-    })
-    
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": "\n📅 签到"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   连续签到: {user_data['signin']['streak']} 天"}
-    })
-    card["modules"].append({
-        "type": "section",
-        "text": {"type": "plain-text", "content": f"   累计签到: {user_data['signin']['total_days']} 天"}
-    })
-    
-    send_kook_card_message(channel_id, card, quote_msg_id=msg_id)
+    try:
+        log_info(f"开始处理个人记录请求，用户ID: {user_id}, 频道ID: {channel_id}")
+        
+        user_data = load_user_data(user_id)
+        pity_data = load_pity_data(user_id)
+        
+        log_info(f"用户数据加载成功，呱太: {user_data.get('gacha', 0)}")
+        
+        card_collection = pity_data.get("card_collection", {})
+        three_stars = []
+        for card_id, info in card_collection.items():
+            if info.get("stars") == 3:
+                three_stars.append({
+                    "id": card_id,
+                    "name": info.get("name", ""),
+                    "rarity": 3,
+                    "limit_type": info.get("limit_type", ""),
+                    "count": info.get("count", 1)
+                })
+        
+        # 计算保底进度
+        fes_pity_remaining = max(0, CONFIG["PITY_LIMIT"] - pity_data.get("fes_pity_count", 0))
+        
+        # 统计限定卡数量
+        fes_count = user_data.get("fes_count", 0)
+        period_count = user_data.get("period_count", 0)
+        other_3star_count = user_data.get("other_3star_count", 0)
+        
+        # 战力
+        power = calculate_power(user_id)
+        
+        # 计算可兑换呱太
+        red_crystal = pity_data.get('red_crystal', 0)
+        blue_crystal = pity_data.get('blue_crystal', 0)
+        exchange_red = red_crystal * 5
+        exchange_blue = blue_crystal * 20
+        total_exchange = exchange_red + exchange_blue
+        
+        # 构建文字消息
+        info_text = (
+            f"📊 个人记录\n"
+            f"呱太: {user_data['gacha']}\n"
+            f"🔴 红色碎片: {red_crystal} → 可兑换 {exchange_red} 呱太\n"
+            f"🔵 蓝色碎片: {blue_crystal} → 可兑换 {exchange_blue} 呱太\n"
+            f"累计抽卡: {pity_data.get('total_draws', 0)}\n"
+            f"累计3星: {pity_data.get('total_3stars', 0)}\n"
+            f"保底进度: {fes_pity_remaining}/{CONFIG['PITY_LIMIT']}\n\n"
+            f"⭐ 卡牌收藏: {len(card_collection)} 张 | 三星: {len(three_stars)} 张\n"
+            f"フェス限定: {fes_count} | 期間中限定: {period_count} | 其他三星: {other_3star_count}\n"
+            f"总战力: {power}\n\n"
+            f"签到: 连续 {user_data['signin']['streak']} 天 | 累计 {user_data['signin']['total_days']} 天\n\n"
+            f"输入「/兑换呱太」即可兑换碎片为呱太"
+        )
+        
+        # 生成三星卡图片
+        img_path = generate_personal_record_image(user_id, user_data, pity_data, three_stars)
+        
+        log_info("个人记录消息构建完成，准备发送")
+        
+        # 发送消息
+        if img_path and os.path.exists(img_path):
+            img = Image.open(img_path)
+            send_kook_message_with_image(channel_id, info_text, img, quote_msg_id=msg_id)
+            os.remove(img_path)
+        else:
+            # 如果没有图片，直接发送文字
+            send_kook_message(channel_id, info_text, quote_msg_id=msg_id)
+        
+    except Exception as e:
+        log_error(f"处理个人记录失败: {e}")
+        import traceback
+        log_error(f"异常堆栈: {traceback.format_exc()}")
+        # 发送错误消息
+        send_kook_message(channel_id, f"查询个人记录失败: {str(e)}", quote_msg_id=msg_id)
 
 def handle_exchange_crystal(user_id, channel_id, msg_id=None):
     """处理碎片兑换呱太请求（与QQ版一致）"""
@@ -3147,9 +3305,9 @@ def get_gacha_leaderboard() -> list:
     leaderboard = []
 
     # 使用INFO_DIR，与QQ版一致
-    for user_file in INFO_DIR.glob("user_*.json"):
+    for user_file in INFO_DIR.glob("gacha_*.json"):
         try:
-            user_id = user_file.stem.replace("user_", "")
+            user_id = user_file.stem.replace("gacha_", "")
             user_data = load_user_data(user_id)
             pity_data = load_pity_data(user_id)
 
@@ -3227,9 +3385,9 @@ def get_leaderboard() -> list:
     leaderboard = []
     
     # 遍历所有用户数据文件（使用INFO_DIR，与QQ版一致）
-    for user_file in INFO_DIR.glob("user_*.json"):
+    for user_file in INFO_DIR.glob("gacha_*.json"):
         try:
-            user_id = user_file.stem.replace("user_", "")
+            user_id = user_file.stem.replace("gacha_", "")
             user_data = load_user_data(user_id)
             
             # 计算战力
@@ -3445,17 +3603,19 @@ def handle_battle_log(user_id, channel_id, gen_gif=False, msg_id=None):
     
     last_battle = user_data["battle_history"][-1]
     
-    if gen_gif and GIF_RENDERER_LOADED:
-        # 使用BytesIO直接发送GIF，不保存到本地
+    # 发送GIF战斗回放（不再发送文本日志）
+    if GIF_RENDERER_LOADED:
         gif_buffer = battle_to_gif_bytes(last_battle)
-        
         if gif_buffer:
             send_kook_gif_bytes(channel_id, "战斗回放", gif_buffer, quote_msg_id=msg_id)
         else:
-            send_kook_message(channel_id, "生成GIF失败！", quote_msg_id=msg_id)
+            send_kook_message(channel_id, "生成战斗回放失败！", quote_msg_id=msg_id)
     else:
-        log_text = "\n".join(last_battle.get("log", [])[:20])
-        send_kook_message(channel_id, f"最近战斗日志：\n{log_text}", quote_msg_id=msg_id)
+        # 如果GIF渲染器未加载，发送简短结果
+        winner = last_battle.get("winner", "unknown")
+        rounds = last_battle.get("rounds", 0)
+        result_text = f"战斗结果：{'胜利' if winner == 'player' else '失败'}，共 {rounds} 回合"
+        send_kook_message(channel_id, result_text, quote_msg_id=msg_id)
 
 def select_3star_from_pool() -> dict:
     """从三星池子中随机抽取一个角色（只返回三星角色）"""
@@ -3707,8 +3867,8 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
             defender_team
         )
         
-        # 保存战斗日志
-        attacker_data["battle_history"].append({
+        # 保存战斗日志（只保留最后一次）
+        attacker_data["battle_history"] = [{
             "time": datetime.now().isoformat(),
             "result": "win" if result.get("player_win") else "lose",
             "opponent": target_user_id,
@@ -3718,8 +3878,7 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
             "player_units": result.get("player_units", []),
             "enemy_units": result.get("enemy_units", []),
             "parsable_log": result.get("parsable_log", [])
-        })
-        attacker_data["battle_history"] = attacker_data["battle_history"][-10:]
+        }]
         save_user_data(user_id)
         
         # 格式化结果
@@ -3794,8 +3953,8 @@ def handle_boss_battle(user_id, channel_id, raw_message, msg_id=None):
             player_team, str(BOSS_CARD_ID), initial_sp=300
         )
 
-        # 保存战斗日志
-        user_data["battle_history"].append({
+        # 保存战斗日志（只保留最后一次）
+        user_data["battle_history"] = [{
             "time": datetime.now().isoformat(),
             "result": "player" if result.get("boss_killed") else "boss",
             "rounds": result.get("rounds", 0),
@@ -3806,8 +3965,7 @@ def handle_boss_battle(user_id, channel_id, raw_message, msg_id=None):
             "boss_damage": result.get("damage_dealt", 0),
             "boss_damage_percent": result.get("damage_percent", 0),
             "boss_killed": result.get("boss_killed", False)
-        })
-        user_data["battle_history"] = user_data["battle_history"][-10:]
+        }]
         save_user_data(user_id)
 
         # 格式化并发送结果
@@ -3916,14 +4074,26 @@ def handle_battle(user_id, channel_id, raw_message, msg_id=None):
         
         # 执行战斗
         log_info(f"战斗开始: {user_id} vs AI难度{ai_difficulty}")
-        result = BATTLE_INSTANCE.start_battle(player_team, enemy_team, challenger="player")
+        # 使用BATTLE_CHARACTERS作为额外角色数据，因为它包含A卡效果信息
+        result = BATTLE_INSTANCE.start_battle(player_team, enemy_team, challenger="player", extra_characters=BATTLE_CHARACTERS)
         
-        # 保存战斗日志（与QQ版一致，滚动保留最近3次）
-        battle_log_key = save_rolling_battle_log(user_id, result)
-        
-        # 生成简短结果
+        # 获取战斗结果
         winner = result.get("winner", "unknown")
         rounds = result.get("rounds", 0)
+        
+        # 保存战斗日志到user_data（只保留最后一次）
+        user_data = load_user_data(user_id)
+        user_data["battle_history"] = [{
+            "time": datetime.now().isoformat(),
+            "result": "player" if winner == "player" else "enemy",
+            "rounds": rounds,
+            "log": result.get("log", []),
+            "parsable_log": result.get("parsable_log", []),  # 添加程序化日志用于GIF渲染
+            "player_units": result.get("player_units", []),
+            "enemy_units": result.get("enemy_units", []),
+            "winner": winner
+        }]
+        save_user_data(user_id)
         
         if winner == "player":
             result_text = f"🏆 胜利！经过 {rounds} 回合的激战，你击败了 {enemy_name}！"
@@ -3940,12 +4110,6 @@ def handle_battle(user_id, channel_id, raw_message, msg_id=None):
         
         # 发送结果
         send_kook_message(channel_id, result_text, quote_msg_id=msg_id)
-        
-        # 发送战斗GIF（如果可用）
-        if GIF_RENDERER_LOADED:
-            gif_buffer = battle_to_gif_bytes(result)
-            if gif_buffer:
-                send_kook_gif_bytes(channel_id, "", gif_buffer)
         
         log_info(f"战斗结束: {user_id} vs AI难度{ai_difficulty}, winner={winner}, rounds={rounds}")
         
@@ -4057,6 +4221,117 @@ def handle_backup_battle_logs(user_id, channel_id, msg_id=None):
         shutil.copy(str(battle_file), str(dest))
     
     send_kook_message(channel_id, f"✅ 已备份 {len(battle_files)} 个战斗日志文件")
+
+def handle_admin_gacha(user_id, channel_id, cmd, msg_id=None):
+    """管理员命令：给用户增加/扣除呱太（与QQ版一致）"""
+    import re
+    # 匹配格式：@用户 数量 呱太
+    match = re.search(r'(met)?(\d+)(met)?\s*(\d+)\s*呱太', cmd)
+    if not match:
+        send_kook_message(channel_id, "格式错误！正确格式：/@用户 呱太 数量 或 /@用户 呱太 扣 数量", quote_msg_id=msg_id)
+        return
+    
+    target_user_id = match.group(2)
+    amount = int(match.group(4))
+    is_deduct = '扣' in cmd or '减' in cmd or '扣除' in cmd
+    
+    if is_deduct:
+        user_data = load_user_data(target_user_id)
+        if user_data["gacha"] < amount:
+            send_kook_message(channel_id, f"扣除失败！用户余额不足（当前：{user_data['gacha']}呱太）", quote_msg_id=msg_id)
+            return
+        user_data["gacha"] -= amount
+        save_user_data(target_user_id)
+        action = "扣除"
+    else:
+        add_gacha(target_user_id, amount)
+        action = "增加"
+    
+    new_balance = load_user_data(target_user_id)["gacha"]
+    send_kook_message(channel_id, f"✅ 管理员操作完成：{action} {target_user_id} {amount}呱太（余额：{new_balance}）", quote_msg_id=msg_id)
+
+def handle_admin_blue_crystal(user_id, channel_id, cmd, msg_id=None):
+    """管理员命令：给用户增加/扣除蓝碎片（与QQ版一致）"""
+    import re
+    # 匹配格式：@用户 数量 蓝碎片
+    match = re.search(r'(met)?(\d+)(met)?\s*(\d+)\s*蓝碎片', cmd)
+    if not match:
+        send_kook_message(channel_id, "格式错误！正确格式：/@用户 蓝碎片 数量 或 /@用户 蓝碎片 扣 数量", quote_msg_id=msg_id)
+        return
+    
+    target_user_id = match.group(2)
+    amount = int(match.group(4))
+    is_deduct = '扣' in cmd or '减' in cmd or '扣除' in cmd
+    
+    pity_data = load_pity_data(target_user_id)
+    current = pity_data.get("blue_crystal", 0)
+    
+    if is_deduct:
+        if current < amount:
+            send_kook_message(channel_id, f"扣除失败！用户余额不足（当前：{current}蓝碎片）", quote_msg_id=msg_id)
+            return
+        pity_data["blue_crystal"] = current - amount
+        save_pity_data(target_user_id)
+        action = "扣除"
+    else:
+        pity_data["blue_crystal"] = current + amount
+        save_pity_data(target_user_id)
+        action = "增加"
+    
+    send_kook_message(channel_id, f"✅ 管理员操作完成：{action} {target_user_id} {amount}蓝碎片（余额：{pity_data['blue_crystal']}）", quote_msg_id=msg_id)
+
+def handle_admin_red_crystal(user_id, channel_id, cmd, msg_id=None):
+    """管理员命令：给用户增加/扣除红碎片（与QQ版一致）"""
+    import re
+    # 匹配格式：@用户 数量 红碎片
+    match = re.search(r'(met)?(\d+)(met)?\s*(\d+)\s*红碎片', cmd)
+    if not match:
+        send_kook_message(channel_id, "格式错误！正确格式：/@用户 红碎片 数量 或 /@用户 红碎片 扣 数量", quote_msg_id=msg_id)
+        return
+    
+    target_user_id = match.group(2)
+    amount = int(match.group(4))
+    is_deduct = '扣' in cmd or '减' in cmd or '扣除' in cmd
+    
+    pity_data = load_pity_data(target_user_id)
+    current = pity_data.get("red_crystal", 0)
+    
+    if is_deduct:
+        if current < amount:
+            send_kook_message(channel_id, f"扣除失败！用户余额不足（当前：{current}红碎片）", quote_msg_id=msg_id)
+            return
+        pity_data["red_crystal"] = current - amount
+        save_pity_data(target_user_id)
+        action = "扣除"
+    else:
+        pity_data["red_crystal"] = current + amount
+        save_pity_data(target_user_id)
+        action = "增加"
+    
+    send_kook_message(channel_id, f"✅ 管理员操作完成：{action} {target_user_id} {amount}红碎片（余额：{pity_data['red_crystal']}）", quote_msg_id=msg_id)
+
+def handle_admin_clear_data(user_id, channel_id, cmd, msg_id=None):
+    """管理员命令：清空用户所有数据"""
+    import re
+    # 匹配格式：@用户 清空数据
+    match = re.search(r'(met)?(\d+)(met)?\s*清空数据', cmd)
+    if not match:
+        send_kook_message(channel_id, "格式错误！正确格式：/@用户 清空数据", quote_msg_id=msg_id)
+        return
+    
+    target_user_id = match.group(2)
+    
+    # 清空用户数据
+    user_data_file = get_user_data_path(target_user_id)
+    pity_data_file = get_pity_data_path(target_user_id)
+    signin_file = get_signin_file(target_user_id)
+    team_file = get_team_data_path(target_user_id)
+    
+    for file in [user_data_file, pity_data_file, signin_file, team_file]:
+        if file.exists():
+            file.unlink()
+    
+    send_kook_message(channel_id, f"✅ 已清空用户 {target_user_id} 的所有数据", quote_msg_id=msg_id)
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():

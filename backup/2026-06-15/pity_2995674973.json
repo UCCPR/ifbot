@@ -1,0 +1,951 @@
+{
+  "total_draws": 850,
+  "pity_count": 5,
+  "fes_pity_count": 10,
+  "total_3stars": 72,
+  "red_crystal": 526,
+  "blue_crystal": 252,
+  "recent_3stars": [
+    {
+      "card_id": "200230012",
+      "chara_id": "200230012",
+      "name": "\u3010\u300e\u9003\u304c\u3057\u5c4b\u300f\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "time": "2026-06-15 20:05:10"
+    },
+    {
+      "card_id": "104030001",
+      "chara_id": "104030001",
+      "name": "\u3010\u8ffd\u8de1\u5c01\u3058\u3011\u30aa\u30ea\u30a2\u30ca\uff1d\u30c8\u30e0\u30bd\u30f3",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-15 20:05:10"
+    },
+    {
+      "card_id": "701030002",
+      "chara_id": "701030002",
+      "name": "\u3010\u8702\u871c\u8272\u306e\u30a2\u30a4\u30c9\u30eb\u3011\u98df\u8702 \u64cd\u7948",
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "time": "2026-06-15 20:05:01"
+    },
+    {
+      "card_id": "110230004",
+      "chara_id": "110230004",
+      "name": "\u3010\u5fc5\u7136\u7684\u306a\u30c8\u30e9\u30d6\u30eb\u906d\u9047\u3011\u524a\u677f \u8ecd\u8987",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-15 17:43:28"
+    },
+    {
+      "card_id": "100433001",
+      "chara_id": "100433001",
+      "name": "\u3010\u8d85\u96fb\u78c1\u7832\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-15 17:43:28"
+    },
+    {
+      "card_id": "218930001",
+      "chara_id": "218930001",
+      "name": "\u3010\u7206\u708e\u306e\u652f\u914d\u8005\u3011\u30b7\u30ba",
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "time": "2026-06-14 17:57:58"
+    },
+    {
+      "card_id": "100430006",
+      "chara_id": "100430006",
+      "name": "\u3010\u6c34\u7740\u306e\u4e59\u5973\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-14 17:57:42"
+    },
+    {
+      "card_id": "208231001",
+      "chara_id": "208231001",
+      "name": "\u3010\u65b0\u305f\u306a\u308b\u5149\u3011\u30d9\u30a4\u30ed\u30fc\u30d7",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-14 17:57:42"
+    },
+    {
+      "card_id": "109230003",
+      "chara_id": "109230003",
+      "name": "\u3010\u30d5\u30e9\u30ef\u30ea\u30f3\u30b0\u30d6\u30e9\u30a4\u30c9\u3011\u30a8\u30b9\u30c6\u30eb\uff1d\u30ed\u30fc\u30bc\u30f3\u30bf\u30fc\u30eb",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-14 17:57:42"
+    },
+    {
+      "card_id": "100230004",
+      "chara_id": "100230004",
+      "name": "\u3010\u30d1\u30c6\u30a3\u30b7\u30a8\u306e\u63a2\u6c42\u5fc3\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-14 17:27:15"
+    }
+  ],
+  "card_collection": {
+    "200430009": {
+      "name": "\u3010\u5b9f\u9a13\u963b\u6b62\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a"
+    },
+    "100422001": {
+      "name": "\u3010\u96fb\u6483\u4f7f\u3044\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 9,
+      "last_time": 1781420856.169691
+    },
+    "203721001": {
+      "name": "\u3010\u53cb\u9054\u601d\u3044\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "last_time": 1781415988.870214
+    },
+    "102421001": {
+      "name": "\u3010\u30eb\u30fc\u30f3\u306e\u4f7f\u3044\u624b\u3011\u30b9\u30c6\u30a4\u30eb\uff1d\u30de\u30b0\u30cc\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "last_time": 1781525110.549935
+    },
+    "200222001": {
+      "name": "\u3010\u5c45\u5019\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 10,
+      "last_time": 1781429235.575543
+    },
+    "124220001": {
+      "name": "\u3010Re\uff1a\u6b7b\u795e\u3011\u30b7\u30c6\u30a3\u30de\u30ab\u30fc\u30d6\u30eb",
+      "stars": 2,
+      "limit_type": "\u8a18\u5ff5",
+      "count": 3,
+      "first_time": "2026-06-13 23:09:39",
+      "last_time": 1781415979.293971
+    },
+    "200821001": {
+      "name": "\u3010\u5b66\u751f\u3011\u5439\u5bc4 \u5236\u7406",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 10,
+      "first_time": "2026-06-13 23:10:59",
+      "last_time": 1781525101.718794
+    },
+    "101320001": {
+      "name": "\u3010\u7b2c\u4e00\u5019\u88dc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 5,
+      "first_time": "2026-06-13 23:10:59",
+      "last_time": 1781431062.339775
+    },
+    "202023001": {
+      "name": "\u3010\u80fd\u529b\u8ffd\u8de1\u3011\u6edd\u58fa \u7406\u540e",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "first_time": "2026-06-13 23:10:59",
+      "last_time": 1781421021.297334
+    },
+    "201522001": {
+      "name": "\u3010\u865a\u6570\u5b66\u533a\u306e\u9375\u3011\u98a8\u65ac \u6c37\u83ef",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-13 23:10:59",
+      "last_time": 1781431328.146278
+    },
+    "103023001": {
+      "name": "\u3010\u5929\u8349\u5f0f\u5341\u5b57\u51c4\u6559\u3011\u4e94\u548c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-13 23:12:42",
+      "last_time": 1781417267.969839
+    },
+    "100123001": {
+      "name": "\u3010\u30d2\u30fc\u30ed\u30fc\u5fd7\u9858\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 10,
+      "first_time": "2026-06-13 23:12:42",
+      "last_time": 1781420856.291633
+    },
+    "109330002": {
+      "name": "\u3010\u80fd\u529b\u306e\u672c\u8cea\u3011\u5e06\u98a8 \u6f64\u5b50",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-13 23:13:50",
+      "last_time": 1781363630.294758
+    },
+    "202321001": {
+      "name": "\u3010\u5438\u8840\u6bba\u3057\u3011\u59eb\u795e \u79cb\u6c99",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 6,
+      "first_time": "2026-06-13 23:13:50",
+      "last_time": 1781431328.204464
+    },
+    "104021001": {
+      "name": "\u3010\u901f\u8a18\u539f\u5178\u3011\u30aa\u30ea\u30a2\u30ca\uff1d\u30c8\u30e0\u30bd\u30f3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 6,
+      "first_time": "2026-06-13 23:15:05",
+      "last_time": 1781431328.332526
+    },
+    "100521001": {
+      "name": "\u3010\u7a7a\u9593\u79fb\u52d5\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 6,
+      "first_time": "2026-06-13 23:15:05",
+      "last_time": 1781420447.129618
+    },
+    "103823001": {
+      "name": "\u3010\u9ec4\u91d1\u932c\u6210\u3011\u30a2\u30a6\u30ec\u30aa\u30eb\u30b9\uff1d\u30a4\u30b6\u30fc\u30c9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-13 23:15:05",
+      "last_time": 1781364183.375022
+    },
+    "200622001": {
+      "name": "\u3010\u5e7c\u5973\u5148\u751f\u3011\u6708\u8a60 \u5c0f\u840c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 11,
+      "first_time": "2026-06-13 23:16:10",
+      "last_time": 1781422901.574633
+    },
+    "101930006": {
+      "name": "\u3010\u771f\u7956\u3011\u30d5\u30ec\u30f3\u30c0\uff1d\u30bb\u30a4\u30f4\u30a7\u30eb\u30f3",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:16:10",
+      "last_time": 1781363770.846497
+    },
+    "202623001": {
+      "name": "\u3010\u6700\u5927\u4e3b\u6559\u3011\u30ed\u30fc\u30e9\uff1d\u30b9\u30c1\u30e5\u30a2\u30fc\u30c8",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "first_time": "2026-06-13 23:18:09",
+      "last_time": 1781415263.465425
+    },
+    "102522001": {
+      "name": "\u3010\u4e03\u5929\u4e03\u5200\u3011\u795e\u88c2 \u706b\u7e54",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-13 23:18:09",
+      "last_time": 1781420437.120865
+    },
+    "203621001": {
+      "name": "\u3010\u98a8\u7d00\u59d4\u54e1\u3011\u521d\u6625 \u98fe\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 11,
+      "first_time": "2026-06-13 23:18:09",
+      "last_time": 1781525110.450852
+    },
+    "101821001": {
+      "name": "\u3010\u7a92\u7d20\u88c5\u7532\u3011\u7d79\u65d7 \u6700\u611b",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 10,
+      "first_time": "2026-06-13 23:19:12",
+      "last_time": 1781525101.635915
+    },
+    "202823001": {
+      "name": "\u3010\u8056\u8077\u8005\u3011\u30aa\u30eb\u30bd\u30e9\uff1d\u30a2\u30af\u30a3\u30ca\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 4,
+      "first_time": "2026-06-13 23:19:12",
+      "last_time": 1781422892.886917
+    },
+    "202322002": {
+      "name": "\u3010\u4f53\u64cd\u670d\u3011\u59eb\u795e \u79cb\u6c99",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-13 23:20:28",
+      "last_time": 1781525101.597252
+    },
+    "101922001": {
+      "name": "\u3010\u30c8\u30e9\u30c3\u30d7\u30de\u30b9\u30bf\u30fc\u3011\u30d5\u30ec\u30f3\u30c0\uff1d\u30bb\u30a4\u30f4\u30a7\u30eb\u30f3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "first_time": "2026-06-13 23:20:28",
+      "last_time": 1781420437.008912
+    },
+    "101121001": {
+      "name": "\u3010\u539f\u5b50\u5d29\u3057\u3011\u9ea6\u91ce \u6c88\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-13 23:20:28",
+      "last_time": 1781417267.936935
+    },
+    "200230014": {
+      "name": "\u3010\u30a2\u30fc\u30af\u30a6\u30a3\u30b6\u30fc\u30c9\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:20:28",
+      "last_time": 1781364028.644361
+    },
+    "124120001": {
+      "name": "\u3010\u6b7b\u795e\u3011\u30b5\u30fc\u30c6\u30a3\u30fc\u30f3\u30c7\u30b9",
+      "stars": 2,
+      "limit_type": "\u8a18\u5ff5",
+      "count": 9,
+      "first_time": "2026-06-13 23:21:30",
+      "last_time": 1781429243.472025
+    },
+    "201424001": {
+      "name": "\u3010\u7406\u4e8b\u9577\u3011\u30a2\u30ec\u30a4\u30b9\u30bf\u30fc\uff1d\u30af\u30ed\u30a6\u30ea\u30fc",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 5,
+      "first_time": "2026-06-13 23:21:30",
+      "last_time": 1781417872.416379
+    },
+    "203320001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30a2\u30f3\u30b8\u30a7\u30ec\u30cd",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 10,
+      "first_time": "2026-06-13 23:23:03",
+      "last_time": 1781525101.820765
+    },
+    "101430001": {
+      "name": "\u3010\u795e\u79d8\u306e\u5426\u5b9a\u8005\u3011\u30a2\u30ec\u30a4\u30b9\u30bf\u30fc\uff1d\u30af\u30ed\u30a6\u30ea\u30fc",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:23:03",
+      "last_time": 1781364183.343304
+    },
+    "602230002": {
+      "name": "\u3010\u30d1\u30f3\u30d7\u30ad\u30f3\u30ac\u30fc\u30eb\u3011\u6253\u3061\u6b62\u3081",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:23:03",
+      "last_time": 1781364183.405753
+    },
+    "101022001": {
+      "name": "\u3010\u5fc3\u7406\u638c\u63e1\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "first_time": "2026-06-13 23:28:56",
+      "last_time": 1781421021.241483
+    },
+    "103422001": {
+      "name": "\u3010\u5fa1\u4f7f\u5815\u3057\u3011\u30df\u30fc\u30b7\u30e3\uff1d\u30af\u30ed\u30a4\u30c4\u30a7\u30d5",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "first_time": "2026-06-13 23:28:56",
+      "last_time": 1781415382.184827
+    },
+    "210230002": {
+      "name": "\u3010\u30d3\u30fc\u30c1\u30d5\u30e9\u30c3\u30b0\u3011\u524a\u677f \u8ecd\u8987",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 2,
+      "first_time": "2026-06-13 23:29:59",
+      "last_time": 1781415988.91424
+    },
+    "101725001": {
+      "name": "\u3010\u5ea7\u6a19\u79fb\u52d5\u3011\u7d50\u6a19 \u6de1\u5e0c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "first_time": "2026-06-13 23:31:06",
+      "last_time": 1781516616.716821
+    },
+    "100323001": {
+      "name": "\u3010\u591a\u89d2\u30b9\u30d1\u30a4\u3011\u571f\u5fa1\u9580 \u5143\u6625",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 4,
+      "first_time": "2026-06-13 23:32:06",
+      "last_time": 1781415382.152932
+    },
+    "1023530001": {
+      "name": "\u3010\u72d9\u6483\u306e\u30d7\u30ed\u3011\u7802\u76bf \u7dfb\u5bc6",
+      "stars": 3,
+      "limit_type": "\u30b7\u30e7\u30c3\u30d7\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:51:59",
+      "last_time": 1781365919.759797
+    },
+    "203220001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30eb\u30c1\u30a2",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 4,
+      "first_time": "2026-06-13 23:51:59",
+      "last_time": 1781525110.486493
+    },
+    "218430001": {
+      "name": "\u3010\u8276\u3084\u304b\u306a\u308b\u5996\u8853\u5e2b\u3011\u30b5\u30f3\u30b8\u30e7\u30a6\u30ce\u30fb\u6625\u59eb",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:51:59",
+      "last_time": 1781365919.992805
+    },
+    "701330001": {
+      "name": "\u3010\u767d\u3044\u7ffc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:52:00",
+      "last_time": 1781365920.035608
+    },
+    "108030004": {
+      "name": "\u3010\u3081\u308b\u3066\u3043\u3059\u3044\u30fc\u3064\u3011\u30ec\u30c3\u30b5\u30fc",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-13 23:54:32",
+      "last_time": 1781366072.328003
+    },
+    "207030001": {
+      "name": "\u3010\u9858\u3044\u751f\u307e\u308c\u308b\u5947\u8e5f\u3011\u30b7\u30e3\u30c3\u30c8\u30a2\u30a6\u30e9\uff1d\u30bb\u30af\u30a6\u30a7\u30f3\u30c4\u30a3\u30a2",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-13 23:54:32",
+      "last_time": 1781366072.392037
+    },
+    "102924001": {
+      "name": "\u3010\u5929\u8349\u5f0f\u5341\u5b57\u51c4\u6559\u3011\u5efa\u5bae \u658e\u5b57",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-14 00:50:13",
+      "last_time": 1781525101.558444
+    },
+    "102125001": {
+      "name": "\u3010\u6b20\u9665\u96fb\u6c17\u3011\u5fa1\u5742\u59b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 8,
+      "first_time": "2026-06-14 00:50:13",
+      "last_time": 1781431062.405928
+    },
+    "104530008": {
+      "name": "\u3010\u95c7\u306b\u5815\u3061\u308b\u3011\u30aa\u30c6\u30a3\u30cc\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 00:54:10",
+      "last_time": 1781369650.727576
+    },
+    "200223002": {
+      "name": "\u3010\u5b8c\u5168\u8a18\u61b6\u80fd\u529b\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 5,
+      "first_time": "2026-06-14 00:54:27",
+      "last_time": 1781420437.064707
+    },
+    "104130001": {
+      "name": "\u3010\u591a\u624d\u80fd\u529b\u3011\u6728\u5c71 \u6625\u751f",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 01:06:18",
+      "last_time": 1781370378.489549
+    },
+    "709430001": {
+      "name": "\u3010\u795e\u306e\u53f3\u5e2d\u3011\u53f3\u65b9\u306e\u30d5\u30a3\u30a2\u30f3\u30de",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 01:06:18",
+      "last_time": 1781370378.584802
+    },
+    "200130006": {
+      "name": "\u3010\u4e09\u500d\u8fd4\u3057\u306e\u7d04\u675f\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 01:06:18",
+      "last_time": 1781370378.648063
+    },
+    "208625001": {
+      "name": "\u3010\u30b7\u30b9\u30bf\u30fc\u3011\u30ea\u30c9\u30f4\u30a3\u30a2\uff1d\u30ed\u30ec\u30f3\u30c4\u30a7\u30c3\u30c6\u30a3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 7,
+      "first_time": "2026-06-14 01:13:02",
+      "last_time": 1781417617.836081
+    },
+    "104530003": {
+      "name": "\u3010\u5927\u6d77\u306e\u9b54\u795e\u3011\u30aa\u30c6\u30a3\u30cc\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 01:13:02",
+      "last_time": 1781370782.518455
+    },
+    "207630004": {
+      "name": "\u3010\u5fc3\u3092\u8a31\u3059\u8ddd\u96e2\u5358\u4f4d\u3011\u5fc3\u7406\u5b9a\u898f",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 01:17:55",
+      "last_time": 1781371075.96362
+    },
+    "203630005": {
+      "name": "\u3010\u8150\u308c\u7e01\u3011\u521d\u6625 \u98fe\u5229",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 01:19:08",
+      "last_time": 1781371148.337806
+    },
+    "200630002": {
+      "name": "\u3010\u4e00\u6559\u5e2b\u306e\u304a\u6b63\u6708\u3011\u6708\u8a60 \u5c0f\u840c",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 11:37:54",
+      "last_time": 1781408274.572479
+    },
+    "203730007": {
+      "name": "\u3010\u30bb\u30af\u30b7\u30fc\u30c9\u30ec\u30b9\u3078\u306e\u6311\u6226\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 11:37:54",
+      "last_time": 1781408274.641143
+    },
+    "200723001": {
+      "name": "\u3010\u8b66\u5099\u54e1\u3011\u9ec4\u6cc9\u5ddd \u611b\u7a42",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 4,
+      "first_time": "2026-06-14 11:37:54",
+      "last_time": 1781414953.18047
+    },
+    "209330002": {
+      "name": "\u3010\u8c4a\u7a63\u306e\u5973\u795e\u3011\u5e06\u98a8 \u6f64\u5b50",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 11:37:54",
+      "last_time": 1781408274.799968
+    },
+    "600230001": {
+      "name": "\u3010\u5e38\u590f\u697d\u5712\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 11:37:54",
+      "last_time": 1781408274.85181
+    },
+    "510630001": {
+      "name": "\u3010\u9b54\u795e\u3011\u50e7\u6b63",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 11:38:00",
+      "last_time": 1781408280.651838
+    },
+    "212930001": {
+      "name": "\u3010\u7cbe\u795e\u611f\u5fdc\u3011\u6625\u4e0a \u887f\u8863",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 11:38:00",
+      "last_time": 1781408280.873622
+    },
+    "706630001": {
+      "name": "\u3010\u81ea\u8eab\u306e\u624b\u3067\u3011\u6d5c\u9762 \u4ed5\u4e0a",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 12:24:53",
+      "last_time": 1781411093.413302
+    },
+    "100930001": {
+      "name": "\u3010\u7a76\u6975\u306e\u6c34\u7740\u30e2\u30c7\u30eb\u3011\u5a5a\u540e \u5149\u5b50",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 12:25:14",
+      "last_time": 1781411114.382895
+    },
+    "100130004": {
+      "name": "\u3010\u300e\u9b54\u795e\u300f\u306e\u63a1\u70b9\u8005\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 12:34:20",
+      "last_time": 1781411660.000588
+    },
+    "102530002": {
+      "name": "\u3010\u30b5\u30f3\u30bb\u30c3\u30c8\u30d3\u30fc\u30c1\u3011\u795e\u88c2 \u706b\u7e54",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 12:34:20",
+      "last_time": 1781411660.056023
+    },
+    "107630002": {
+      "name": "\u3010\u30d6\u30e9\u30a4\u30c9\u30e9\u30a4\u30ba\u3011\u5fc3\u7406\u5b9a\u898f",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 12:34:20",
+      "last_time": 1781411660.215256
+    },
+    "703730001": {
+      "name": "\u3010\u8d85\u96fb\u78c1\u7832\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 12:36:35",
+      "last_time": 1781411795.308798
+    },
+    "215730001": {
+      "name": "\u3010\u300e\u5f14\u8a5e\u306e\u8a60\u307f\u624b\u300f\u3011\u30de\u30fc\u30b8\u30e7\u30ea\u30fc\u30fb\u30c9\u30fc",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:16:20",
+      "last_time": 1781414180.881351
+    },
+    "213930001": {
+      "name": "\u3010\u5e78\u305b\u306a\u30af\u30ea\u30b9\u30de\u30b9\u3011\u8b66\u7b56 \u770b\u53d6",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:16:20",
+      "last_time": 1781414180.912542
+    },
+    "219830001": {
+      "name": "\u3010\u6804\u5149\u7d0b\u306e\u5c11\u5973\u3011\u30eb\u30ea\u30a4\uff1d\u30a2\u30fc\u30d9\u30f3\u30c8\u30ed\u30fc\u30c8",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:16:20",
+      "last_time": 1781414180.965469
+    },
+    "202222001": {
+      "name": "\u3010\u6700\u7d42\u4fe1\u53f7\u3011\u6253\u3061\u6b62\u3081",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 4,
+      "first_time": "2026-06-14 13:16:37",
+      "last_time": 1781420207.766854
+    },
+    "104330006": {
+      "name": "\u3010\u60aa\u9b54\u306e\u3088\u3046\u306a\u9b54\u8853\u5e2b\u3011\u30ec\u30a4\u30f4\u30a3\u30cb\u30a2\uff1d\u30d0\u30fc\u30c9\u30a6\u30a7\u30a4",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:16:37",
+      "last_time": 1781414197.851897
+    },
+    "606930001": {
+      "name": "\u3010\u5922\u306e\u5165\u308a\u53e3\u3011\u9cf4\u8b77 \u30a2\u30ea\u30b5",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:29:13",
+      "last_time": 1781414953.148145
+    },
+    "203230001": {
+      "name": "\u3010\u5815\u5929\u4f7f\u30a8\u30ed\u30e1\u30a4\u30c9\u3011\u30eb\u30c1\u30a2",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 13:34:13",
+      "last_time": 1781415253.119292
+    },
+    "101030007": {
+      "name": "\u3010\u8056\u591c\u306e\u8a08\u753b\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:34:13",
+      "last_time": 1781415253.267015
+    },
+    "202830002": {
+      "name": "\u3010\u30af\u30eb\u30fc\u30b8\u30f3\u30b0\u30d3\u30fc\u30ca\u30b9\u3011\u30aa\u30eb\u30bd\u30e9\uff1d\u30a2\u30af\u30a3\u30ca\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:34:23",
+      "last_time": 1781415263.554395
+    },
+    "206520001": {
+      "name": "\u3010\u6b66\u88c5\u7121\u80fd\u529b\u8005\u96c6\u56e3\u3011\u99d2\u5834 \u5229\u5fb3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-14 13:48:40",
+      "last_time": 1781423112.763534
+    },
+    "720330001": {
+      "name": "\u3010\u6570\u3042\u308b\u53ef\u80fd\u6027\u306e\u4e00\u3064\u3011\u30a2\u30ec\u30a4\u30b9\u30bf\u30fc\uff1d\u30af\u30ed\u30a6\u30ea\u30fc\uff08\u5c11\u5973\uff09",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 13:48:40",
+      "last_time": 1781416120.440918
+    },
+    "201030004": {
+      "name": "\u3010\u30b5\u30de\u30fc\u30b9\u30a4\u30fc\u30c8\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:07:48",
+      "last_time": 1781417268.070607
+    },
+    "723430001": {
+      "name": "\u3010\u6df1\u6df5\u306e\u652f\u914d\u8005\u3011\u30b3\u30ed\u30f3\u30be\u30f3",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:07:48",
+      "last_time": 1781417268.110847
+    },
+    "100530009": {
+      "name": "\u3010\u30a2\u30e9\u30d3\u30a2\u30f3\u30ca\u30a4\u30c8\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:17:38",
+      "last_time": 1781417858.475297
+    },
+    "600230002": {
+      "name": "\u3010\u5185\u7dd2\u306e\u8d08\u308a\u7269\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:23:10",
+      "last_time": 1781418190.479987
+    },
+    "118730001": {
+      "name": "\u3010\u9b54\u7269\u3092\u7d71\u3079\u308b\u8005\u3011\u30ea\u30e0\u30eb\uff1d\u30c6\u30f3\u30da\u30b9\u30c8",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:25:10",
+      "last_time": 1781418310.899633
+    },
+    "201330002": {
+      "name": "\u3010\u9a0e\u99ac\u61b2\u5175\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:26:38",
+      "last_time": 1781418398.303197
+    },
+    "609330001": {
+      "name": "\u3010\u81f3\u798f\u306e\u6642\u9593\u3011\u5e06\u98a8 \u6f64\u5b50",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:26:38",
+      "last_time": 1781418398.335015
+    },
+    "202530001": {
+      "name": "\u3010\u9b45\u60d1\u306e\u8056\u4eba\u3011\u795e\u88c2 \u706b\u7e54",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:26:51",
+      "last_time": 1781418411.9113
+    },
+    "600530004": {
+      "name": "\u3010\u300e\u5fa1\u5742\u7f8e\u7434\u306e\u61d0\u5200\u300f\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:51:05",
+      "last_time": 1781419865.575619
+    },
+    "101030008": {
+      "name": "\u3010\u30af\u30a4\u30fc\u30f3\u30a6\u30b5\u8033\u30e1\u30a4\u30c9\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 14:51:05",
+      "last_time": 1781419865.659979
+    },
+    "200230006": {
+      "name": "\u3010\u30ca\u30fc\u30b7\u30f3\u30b0\u30b7\u30b9\u30bf\u30fc\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:00:37",
+      "last_time": 1781420437.241327
+    },
+    "200430010": {
+      "name": "\u3010\u6d6e\u304d\u7acb\u3064\u6c17\u6301\u3061\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:07:36",
+      "last_time": 1781420856.136141
+    },
+    "912830001": {
+      "name": "\u3010MAR\u4ed8\u5c5e\u7814\u7a76\u6240\u6240\u9577\u3011\u30c6\u30ec\u30b9\u30c6\u30a3\u30fc\u30ca\uff1d\u6728\u539f\uff1d\u30e9\u30a4\u30d5\u30e9\u30a4\u30f3",
+      "stars": 3,
+      "limit_type": "\u30b7\u30e7\u30c3\u30d7\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:07:36",
+      "last_time": 1781420856.259707
+    },
+    "100530004": {
+      "name": "\u3010\u8056\u306a\u308b\u98a8\u7d00\u59d4\u54e1\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:10:05",
+      "last_time": 1781421005.210583
+    },
+    "600130006": {
+      "name": "\u3010\u5207\u308a\u672d\u3068\u306a\u308b\u7537\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:10:21",
+      "last_time": 1781421021.208209
+    },
+    "217830001": {
+      "name": "\u3010\u82f1\u56fd\u7b2c\u4e00\u738b\u5973\u3011\u30ea\u30e1\u30a8\u30a2",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 15:41:32",
+      "last_time": 1781422892.998111
+    },
+    "104330002": {
+      "name": "\u3010\u30af\u30ea\u30b9\u30de\u30b9\u30d1\u30fc\u30c6\u30a3\u30fc\u3011\u30ec\u30a4\u30f4\u30a3\u30cb\u30a2\uff1d\u30d0\u30fc\u30c9\u30a6\u30a7\u30a4",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:41:33",
+      "last_time": 1781422893.03154
+    },
+    "725330001": {
+      "name": "\u3010\u90aa\u60aa\u306e\u6a39\u3011\u30af\u30ea\u30d5\u30a1\u30d1\u30ba\u30eb\uff15\uff14\uff15",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 15:41:33",
+      "last_time": 1781422893.0978
+    },
+    "208730002": {
+      "name": "\u3010\u5b9a\u4f4d\u7f6e\u3011\u7981\u66f8\u76ee\u9332\u305f\u3093",
+      "stars": 3,
+      "limit_type": "\u8a18\u5ff5",
+      "count": 1,
+      "first_time": "2026-06-14 15:41:41",
+      "last_time": 1781422901.494166
+    },
+    "104530006": {
+      "name": "\u3010\u9ec4\u660f\u306e\u5973\u795e\u3011\u30aa\u30c6\u30a3\u30cc\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 17:27:15",
+      "last_time": 1781429235.37716
+    },
+    "100433001": {
+      "name": "\u3010\u8d85\u96fb\u78c1\u7832\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-14 17:27:15",
+      "last_time": 1781516608.044025
+    },
+    "100230004": {
+      "name": "\u3010\u30d1\u30c6\u30a3\u30b7\u30a8\u306e\u63a2\u6c42\u5fc3\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 17:27:15",
+      "last_time": 1781429235.542303
+    },
+    "109230003": {
+      "name": "\u3010\u30d5\u30e9\u30ef\u30ea\u30f3\u30b0\u30d6\u30e9\u30a4\u30c9\u3011\u30a8\u30b9\u30c6\u30eb\uff1d\u30ed\u30fc\u30bc\u30f3\u30bf\u30fc\u30eb",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 17:57:42",
+      "last_time": 1781431062.371804
+    },
+    "208231001": {
+      "name": "\u3010\u65b0\u305f\u306a\u308b\u5149\u3011\u30d9\u30a4\u30ed\u30fc\u30d7",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-14 17:57:42",
+      "last_time": 1781431062.441665
+    },
+    "100430006": {
+      "name": "\u3010\u6c34\u7740\u306e\u4e59\u5973\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 17:57:42",
+      "last_time": 1781431062.477055
+    },
+    "218930001": {
+      "name": "\u3010\u7206\u708e\u306e\u652f\u914d\u8005\u3011\u30b7\u30ba",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-14 17:57:58",
+      "last_time": 1781431078.431402
+    },
+    "110230004": {
+      "name": "\u3010\u5fc5\u7136\u7684\u306a\u30c8\u30e9\u30d6\u30eb\u906d\u9047\u3011\u524a\u677f \u8ecd\u8987",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-15 17:43:28",
+      "last_time": 1781516608.299232
+    },
+    "701030002": {
+      "name": "\u3010\u8702\u871c\u8272\u306e\u30a2\u30a4\u30c9\u30eb\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-15 20:05:01",
+      "last_time": 1781525101.786092
+    },
+    "104030001": {
+      "name": "\u3010\u8ffd\u8de1\u5c01\u3058\u3011\u30aa\u30ea\u30a2\u30ca\uff1d\u30c8\u30e0\u30bd\u30f3",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-15 20:05:10",
+      "last_time": 1781525110.297625
+    },
+    "200230012": {
+      "name": "\u3010\u300e\u9003\u304c\u3057\u5c4b\u300f\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-15 20:05:10",
+      "last_time": 1781525110.411722
+    }
+  },
+  "fes_count": 8,
+  "period_count": 31,
+  "other_3star_count": 31,
+  "total_2stars": 39
+}

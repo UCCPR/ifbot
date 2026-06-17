@@ -1,0 +1,33 @@
+{
+  "total_draws": 10,
+  "pity_count": 2,
+  "fes_pity_count": 9,
+  "total_3stars": 1,
+  "red_crystal": 8,
+  "blue_crystal": 1,
+  "recent_3stars": [
+    {
+      "card_id": "603930001",
+      "chara_id": "603930001",
+      "name": "\u3010\u5949\u4ed5\u306e\u7cbe\u795e\u3011\u571f\u5fa1\u9580 \u821e\u590f",
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "time": "2026-06-10 10:54:31"
+    }
+  ],
+  "card_collection": {
+    "200222001": {
+      "name": "\u3010\u5c45\u5019\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "603930001": {
+      "name": "\u3010\u5949\u4ed5\u306e\u7cbe\u795e\u3011\u571f\u5fa1\u9580 \u821e\u590f",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a"
+    }
+  },
+  "fes_count": 0,
+  "period_count": 0,
+  "other_3star_count": 1,
+  "total_2stars": 1
+}

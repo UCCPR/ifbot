@@ -1,0 +1,195 @@
+{
+  "total_draws": 60,
+  "pity_count": 7,
+  "fes_pity_count": 56,
+  "total_3stars": 4,
+  "red_crystal": 34,
+  "blue_crystal": 22,
+  "recent_3stars": [
+    {
+      "card_id": "207732001",
+      "chara_id": "207732001",
+      "name": "\u3010\u82f1\u56fd\u7b2c\u4e8c\u738b\u5973\u3011\u30ad\u30e3\u30fc\u30ea\u30b5",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-10 20:06:13"
+    },
+    {
+      "card_id": "121930001",
+      "chara_id": "121930001",
+      "name": "\u3010\u9996\u306a\u3057\u30e9\u30a4\u30c0\u30fc\u3011\u30bb\u30eb\u30c6\u30a3\u30fb\u30b9\u30c8\u30a5\u30eb\u30eb\u30bd\u30f3",
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "time": "2026-06-09 16:20:49"
+    },
+    {
+      "card_id": "224530001",
+      "chara_id": "224530001",
+      "name": "\u3010\u72c2\u6c17\u306e\u5fa9\u8b90\u8005\u3011\u6728\u539f \u552f\u4e00",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-09 16:20:49"
+    },
+    {
+      "card_id": "105530001",
+      "chara_id": "105530001",
+      "name": "\u3010\u6311\u3080\u6c7a\u610f\u3011\u6ce1\u6d6e \u4e07\u5f6c",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-09 16:19:46"
+    }
+  ],
+  "card_collection": {
+    "105530001": {
+      "name": "\u3010\u6311\u3080\u6c7a\u610f\u3011\u6ce1\u6d6e \u4e07\u5f6c",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38"
+    },
+    "200821001": {
+      "name": "\u3010\u5b66\u751f\u3011\u5439\u5bc4 \u5236\u7406",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "100521001": {
+      "name": "\u3010\u7a7a\u9593\u79fb\u52d5\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "102125001": {
+      "name": "\u3010\u6b20\u9665\u96fb\u6c17\u3011\u5fa1\u5742\u59b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "200723001": {
+      "name": "\u3010\u8b66\u5099\u54e1\u3011\u9ec4\u6cc9\u5ddd \u611b\u7a42",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "last_time": 1781093127.267917
+    },
+    "200223002": {
+      "name": "\u3010\u5b8c\u5168\u8a18\u61b6\u80fd\u529b\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "202823001": {
+      "name": "\u3010\u8056\u8077\u8005\u3011\u30aa\u30eb\u30bd\u30e9\uff1d\u30a2\u30af\u30a3\u30ca\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38"
+    },
+    "224530001": {
+      "name": "\u3010\u72c2\u6c17\u306e\u5fa9\u8b90\u8005\u3011\u6728\u539f \u552f\u4e00",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a"
+    },
+    "121930001": {
+      "name": "\u3010\u9996\u306a\u3057\u30e9\u30a4\u30c0\u30fc\u3011\u30bb\u30eb\u30c6\u30a3\u30fb\u30b9\u30c8\u30a5\u30eb\u30eb\u30bd\u30f3",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a"
+    },
+    "206520001": {
+      "name": "\u3010\u6b66\u88c5\u7121\u80fd\u529b\u8005\u96c6\u56e3\u3011\u99d2\u5834 \u5229\u5fb3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:04:43",
+      "last_time": 1781093083.05317
+    },
+    "101022001": {
+      "name": "\u3010\u5fc3\u7406\u638c\u63e1\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 20:04:43",
+      "last_time": 1781093173.391429
+    },
+    "100422001": {
+      "name": "\u3010\u96fb\u6483\u4f7f\u3044\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:04:43",
+      "last_time": 1781093083.166993
+    },
+    "103023001": {
+      "name": "\u3010\u5929\u8349\u5f0f\u5341\u5b57\u51c4\u6559\u3011\u4e94\u548c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:04:43",
+      "last_time": 1781093083.191541
+    },
+    "202623001": {
+      "name": "\u3010\u6700\u5927\u4e3b\u6559\u3011\u30ed\u30fc\u30e9\uff1d\u30b9\u30c1\u30e5\u30a2\u30fc\u30c8",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:05:08",
+      "last_time": 1781093108.266889
+    },
+    "201424001": {
+      "name": "\u3010\u7406\u4e8b\u9577\u3011\u30a2\u30ec\u30a4\u30b9\u30bf\u30fc\uff1d\u30af\u30ed\u30a6\u30ea\u30fc",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:05:08",
+      "last_time": 1781093108.382705
+    },
+    "203621001": {
+      "name": "\u3010\u98a8\u7d00\u59d4\u54e1\u3011\u521d\u6625 \u98fe\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:05:27",
+      "last_time": 1781093127.158018
+    },
+    "101320001": {
+      "name": "\u3010\u7b2c\u4e00\u5019\u88dc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 20:05:27",
+      "last_time": 1781093173.444145
+    },
+    "101121001": {
+      "name": "\u3010\u539f\u5b50\u5d29\u3057\u3011\u9ea6\u91ce \u6c88\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:05:27",
+      "last_time": 1781093127.313868
+    },
+    "203220001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30eb\u30c1\u30a2",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 20:05:27",
+      "last_time": 1781093173.505421
+    },
+    "207732001": {
+      "name": "\u3010\u82f1\u56fd\u7b2c\u4e8c\u738b\u5973\u3011\u30ad\u30e3\u30fc\u30ea\u30b5",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:06:13",
+      "last_time": 1781093173.418159
+    },
+    "203721001": {
+      "name": "\u3010\u53cb\u9054\u601d\u3044\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:06:13",
+      "last_time": 1781093173.529927
+    },
+    "203320001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30a2\u30f3\u30b8\u30a7\u30ec\u30cd",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:06:13",
+      "last_time": 1781093173.560587
+    }
+  },
+  "fes_count": 0,
+  "period_count": 1,
+  "other_3star_count": 3,
+  "total_2stars": 18
+}

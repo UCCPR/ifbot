@@ -21,7 +21,7 @@ GACHA10_COST = 3000     # 十连价格（呱太）
 GACHA10_COOLDOWN_SECONDS = 60  # 十连冷却时间（秒），每个用户一分钟至多抽一次十连
 GET_GACHA_COOLDOWN_SECONDS = 60  # 获取呱太冷却时间（秒）
 LIMITED_GACHA_COST = 15000  # 限定池十连价格（呱太）
-LIMITED_GACHA_COOLDOWN_SECONDS = 600  # 限定池冷却时间（秒），10分钟
+LIMITED_GACHA_COOLDOWN_SECONDS = 480  # 限定池冷却时间（秒），8分钟
 GET_GACHA_REWARD = 10000  # 获取呱太奖励
 DAILY_REWARD = 30000     # 每日签到奖励（呱太）
 

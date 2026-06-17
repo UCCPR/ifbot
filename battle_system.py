@@ -229,13 +229,19 @@ ATTRIBUTE_ALIASES = {
 # ========== 战斗配置 ==========
 TOTAL_BATTLE_POSITIONS = 6   # 总战斗位数量
 TOTAL_ASSIST_POSITIONS = 6   # 总支援位数量
-BATTLE_POSITIONS_ON_FIELD = 3  # 场上战斗位数量
+BATTLE_POSITIONS_ON_FIELD = 5  # 场上战斗位总列数（5列）
+INITIAL_DEPLOY_COUNT = 3       # 初始上场人数（只占0/2/4列）
 MAX_BATTLE_ROUNDS = 12  # 最大战斗回合数
+# 初始上场位置（0-based：只占 0,2,4，1和3用于换位后空位）
+INITIAL_FIELD_POSITIONS = [0, 2, 4]
+# 换位可用位置（5列均可）
+ALL_FIELD_COLS = [0, 1, 2, 3, 4]  # 换位可用全部5列
 
 # SP配置
 SP_PER_ATTACK = 15  # 攻击获得SP
 SP_PER_DAMAGED = 10  # 被攻击获得SP
-SP_MAX = 100  # SP上限
+SP_MAX = 300  # SP上限（一队共用）
+ULT_COST = 100  # 必杀技消耗SP
 
 # 同色增益
 SAME_COLOR_BONUS = 1.05  # B卡A卡同色时增益5%
@@ -243,16 +249,22 @@ SAME_COLOR_BONUS = 1.05  # B卡A卡同色时增益5%
 
 # ========== buff/debuff关键词列表 ==========
 ALL_TIME_LIST = [
-    '行动开始时', '敌方行动开始时',
-    '(我方一对角色|自身以外的我方|自身)(必杀|技能|对敌方暴击|对敌方造成伤害)时'
+    '行动开始时', '敌方行动开始时', '替补入场时',
+    '自身技能时', '自身必杀时', '自身对敌方暴击时', '自身对敌方造成伤害时',
+    '自身退场时',
+    'HP低于50%时', 'HP低于30%时', '敌方SP满时', '击破时'
 ]
 
 ALL_AREA_LIST = [
+    '我方全体', '自身(?!以外)', '自身以外的我方全体', '敌全体',
+    '我方一对角色', '该敌方角色',
+    '同色我方全体', '同色敌全体',
+    '(红|绿|蓝|黄|紫)色敌全体',
     '范围内', '三方向', '正面', '左侧', '右侧', '[前左右]+',
     '同色与有利色敌全体', '(同色|有利色)敌全体', '..侧敌全体',
-    '(.色与)?.色敌全体', '敌全体', '该敌方角色',
-    '同色我方', '该我方角色', '(.色与)?.色我方全体',
-    '自身以外的我方全体', '我方全体', '其他我方', '自身与两邻', '自身', '两邻'
+    '(.色与)?.色敌全体',
+    '同色我方', '(.色与)?.色我方全体',
+    '自身与两邻', '自身', '两邻'
 ]
 
 ALL_BUFF_LIST = [
@@ -273,6 +285,7 @@ ALL_DEBUFF_LIST = [
     r'物攻下降\(.+?\)', r'异攻下降\(.+?\)', r'物防下降\(.+?\)',
     r'异防下降\(.+?\)', r'必杀威力下降\(.+?\)',
     r'暴击率下降\(.+?\)', r'回避率下降\(.+?\)', r'暴击防御下降\(.+?\)',
+    r'SP获得量下降\(.+?\)', r'SP获得量下降',
     r'技能/必杀耐性下降\(.+?\)', r'.色耐性下降\(.+?\)'
 ]
 
@@ -359,9 +372,10 @@ class AssistEffect:
     trigger_time: str = "行动开始时"  # 触发时机
     area: str = "自身"  # 作用范围
     effects: List[str] = field(default_factory=list)  # 效果列表
+    duration: int = 0  # 持续回合数
     current_count: int = 0  # 当前触发计数
     current_cd: int = 0  # 当前冷却（初始为0）
-    cd: int = 0  # 冷却回合
+    cd: int = 0  # 冷却回合（触发后需等待的回合数）
     
     def is_ready(self) -> bool:
         """检查是否可以触发"""
@@ -517,6 +531,17 @@ class BattleSystem:
         self.characters = {}
         self._load_characters(characters_data)
     
+    def _get_arrow_by_position(self, position: int, side: str) -> str:
+        """根据位置获取箭头符号"""
+        # 玩家方箭头
+        player_arrows = ['↙', '←', '↓', '→', '↘']
+        # 敌方箭头（镜像）
+        enemy_arrows = ['↖', '←', '↑', '→', '↗']
+        
+        if 0 <= position < 5:
+            return player_arrows[position] if side == 'P' else enemy_arrows[position]
+        return ''
+    
     def _normalize_attribute(self, attr: str) -> str:
         """标准化属性名称"""
         if not attr:
@@ -580,39 +605,78 @@ class BattleSystem:
         
         return skill
     
-    def _parse_assist_text(self, text: str) -> Optional[AssistEffect]:
-        """解析支援卡技能文本"""
+    def _parse_assist_text(self, text: str, cd: int = 0) -> Optional[AssistEffect]:
+        """解析支援卡技能文本
+        格式: [条件] [对象] [效果列表] X回合 (Y次)
+        例: 行动开始时我方全体【物攻提升(中)】1回合(1次)
+        例: 自身技能时,【物防提升(小)】,【SP获得量提升(小)】2回合
+        """
         if not text:
             return None
-        
+
         effect = AssistEffect()
-        
-        # 解析触发次数
+        effect.cd = cd
+
+        # 解析最大触发次数: (X次)
         count_match = re.search(r'\((\d+)次\)', text)
         if count_match:
             effect.trigger_count = int(count_match.group(1))
-        
-        # 解析触发时机
-        time_patterns = ['行动开始时', '敌方行动开始时', '必杀时', '技能时', '对敌方暴击时', '对敌方造成伤害时']
-        for time in time_patterns:
-            if time in text:
-                effect.trigger_time = time
+
+        # 解析触发时机 — 长串优先（避免"行动开始时"误匹配"敌方行动开始时"）
+        time_exact = [
+            '自身对敌方造成伤害时', '自身对敌方暴击时',
+            '敌方行动开始时', '行动开始时',
+            '替补入场时',
+            '自身技能时', '自身必杀时',
+            '自身退场时',
+            'HP低于50%时', 'HP低于30%时', '敌方SP满时', '击破时'
+        ]
+        for t in time_exact:
+            if t in text:
+                effect.trigger_time = t
                 break
-        
-        # 解析作用范围
-        area_patterns = ['我方全体', '自身以外的我方全体', '自身', '同色我方', '敌全体', '同色敌全体']
-        for area in area_patterns:
-            if area in text:
-                effect.area = area
+
+        # 解析作用范围 — 按优先级，先匹配更具体的
+        area_exact = [
+            '自身以外的我方全体', '我方一对角色', '我方全体',
+            '同色我方全体', '同色敌全体', '同色我方', '同色',
+            '该敌方角色', '敌全体',
+            '自身与两邻', '两邻', '自身',
+        ]
+        for a in area_exact:
+            if a in text:
+                effect.area = a
                 break
-        
-        # 解析效果
-        effects = []
+
+        # 解析特殊颜色目标: X色敌全体
+        color_area_match = re.search(r'(红|绿|蓝|黄|紫)色敌全体', text)
+        if color_area_match:
+            effect.area = color_area_match.group(0)
+
+        # 解析效果 — 提取【】内容 + 无括号效果（使用完整匹配文本）
+        effect_list = []
+        # 提取所有【效果名(幅度)】格式（保留完整文本如"物攻提升(中)"）
+        bracket_effects = re.findall(r'【(.+?)】', text)
+        effect_list.extend(bracket_effects)
+        # 提取无括号效果: HP回复(X), SP15上升, 弱体状态解除等（使用finditer获取完整匹配）
         for pattern in ALL_BUFF_LIST + ALL_DEBUFF_LIST + ALL_SP_LIST:
-            matches = re.findall(pattern, text)
-            effects.extend(matches)
-        effect.effects = effects
-        
+            for m in re.finditer(pattern, text):
+                effect_list.append(m.group(0))  # 完整匹配文本
+        # 去重保持顺序
+        seen = set()
+        effect.effects = []
+        for e in effect_list:
+            if e not in seen:
+                seen.add(e)
+                effect.effects.append(e)
+
+        # 解析持续回合数
+        dur_match = re.search(r'(\d+)回合', text)
+        if dur_match:
+            effect.duration = int(dur_match.group(1))
+        else:
+            effect.duration = 0  # 瞬时效果
+
         return effect
     
     def _parse_passive_text(self, text: str, level: int, attack_type: str, enemy_side: str) -> List[Passive]:
@@ -693,8 +757,11 @@ class BattleSystem:
                 assist_effect2 = None
                 
                 if char_data.get("type") == "assist":
-                    assist_effect1 = self._parse_assist_text(skill_text1)
-                    assist_effect2 = self._parse_assist_text(skill_text2)
+                    # 从skill数据中提取CD值（Excel CD1/CD2列）
+                    sk1_cd = skill1_data.get("cd", 0) if isinstance(skill1_data, dict) else 0
+                    sk2_cd = skill2_data.get("cd", 0) if isinstance(skill2_data, dict) else 0
+                    assist_effect1 = self._parse_assist_text(skill_text1, int(sk1_cd) if sk1_cd else 0)
+                    assist_effect2 = self._parse_assist_text(skill_text2, int(sk2_cd) if sk2_cd else 0)
                 
                 # 解析潜能
                 passives = []
@@ -755,9 +822,50 @@ class BattleSystem:
             char = self.characters.get(self.CARD_ID_MAP[cid])
         return char
     
-    def create_battle_unit(self, card_id: str, position: int, is_assist: bool = False) -> Optional[BattleUnit]:
+    def create_battle_unit(self, card_id: str, position: int, is_assist: bool = False, extra_characters: dict = None) -> Optional[BattleUnit]:
         """创建战斗单位（找不到角色时用默认占位）"""
         character = self.get_character(card_id)
+        
+        # 如果在战斗系统中找不到角色，尝试从extra_characters查找
+        if not character and extra_characters:
+            char_data = extra_characters.get(str(card_id))
+            if char_data:
+                card_type = char_data.get("type", "battle")
+                is_assist_card = card_type == "assist"
+                
+                assist_effect1 = None
+                assist_effect2 = None
+                
+                # 如果是A卡，解析A卡效果
+                if is_assist_card:
+                    skill_text1 = char_data.get("skill1", {}).get("description", "")
+                    skill_cd1 = char_data.get("skill1", {}).get("cd", 0)
+                    skill_text2 = char_data.get("skill2", {}).get("description", "")
+                    skill_cd2 = char_data.get("skill2", {}).get("cd", 0)
+                    
+                    assist_effect1 = self._parse_assist_text(skill_text1, skill_cd1)
+                    assist_effect2 = self._parse_assist_text(skill_text2, skill_cd2)
+                
+                # 从extra_characters创建一个简化的战斗角色
+                character = Character(
+                    card_id=str(card_id), 
+                    name=char_data.get("name", f'未知({str(card_id)[:6]})'),
+                    hp=char_data.get("hp", 10000), 
+                    attack=char_data.get("attack", 3000), 
+                    defense=char_data.get("defense", 2000), 
+                    speed=char_data.get("speed", 1000) if char_data.get("speed") else 500,
+                    attribute=char_data.get("element", char_data.get("attribute", "红")), 
+                    attack_type=char_data.get("attack_type", "物理"), 
+                    attack_directions=len(char_data.get("attack_directions", [0])) if isinstance(char_data.get("attack_directions"), list) else 1, 
+                    side=char_data.get("side", "科学"),
+                    skill=None, 
+                    ultimate=None, 
+                    assist_effect1=assist_effect1, 
+                    assist_effect2=assist_effect2, 
+                    passives=[],
+                    is_assist=is_assist_card
+                )
+        
         if not character:
             log_error(f"找不到角色: {card_id}，使用默认占位")
             character = self._get_fallback_character(card_id)
@@ -770,7 +878,7 @@ class BattleSystem:
             is_assist=is_assist
         )
     
-    def build_battle_team(self, team_data: dict) -> List[BattleUnit]:
+    def build_battle_team(self, team_data: dict, extra_characters: dict = None) -> List[BattleUnit]:
         """构建战斗队伍"""
         units = []
         
@@ -782,19 +890,23 @@ class BattleSystem:
         if not isinstance(assist_cards, list):
             assist_cards = []
         
+        # 初始战斗位置映射：0→0, 1→2, 2→4（初始上场占这3个位置）, 3→5(替补), 4→6(替补), 5→7(替补)
+        # 场上位置0-4都是战斗位置，位置1和3初始为空，可通过换位使用
+        battle_position_map = [0, 2, 4, 5, 6, 7]
+        
         # 创建战斗单位
         for i in range(TOTAL_BATTLE_POSITIONS):
             card_id = battle_cards[i] if i < len(battle_cards) else None
             if card_id:
-                unit = self.create_battle_unit(card_id, i, False)
+                unit = self.create_battle_unit(card_id, battle_position_map[i], False, extra_characters)
                 if unit:
                     units.append(unit)
         
-        # 创建支援单位
+        # 创建支援单位（位置映射与战斗单位一致）
         for i in range(TOTAL_ASSIST_POSITIONS):
             card_id = assist_cards[i] if i < len(assist_cards) else None
             if card_id:
-                unit = self.create_battle_unit(card_id, i, True)
+                unit = self.create_battle_unit(card_id, battle_position_map[i], True, extra_characters)
                 if unit:
                     units.append(unit)
         
@@ -1046,10 +1158,10 @@ class BattleSystem:
                     if o not in offsets: offsets.append(o); break
         for d in attacker.debuffs:
             if d.name=="攻击方向-" and len(offsets)>1: offsets=offsets[:-1]
-        pos = attacker.position % 3
-        cols = {pos+off for off in offsets if 0<=pos+off<3}
+        pos = attacker.position % 5
+        cols = {pos+off for off in offsets if 0<=pos+off<5}
         if not cols: return []
-        targets = [e for e in enemies if e.alive and (e.position%3) in cols]
+        targets = [e for e in enemies if e.alive and e.position < 5 and (e.position%5) in cols]
         if "范围内" in area: return targets[:len(offsets)]
         return targets
     def _get_sp_rate(self, unit: 'BattleUnit') -> float:
@@ -1224,10 +1336,30 @@ class BattleSystem:
             damage, reflect_logs, attacker_died = self._handle_counter_effects(target, attacker, damage)
             results.extend(reflect_logs)
 
+            # 记录受击状态
+            hit_status = {"blocked": False, "reflected": False, "absorbed": False, "reduced": False}
+            
+            # 检查是否有反射效果
+            if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
+                hit_status["reflected"] = True
+
             # 盾判定：抵挡一次非贯通伤害
             if self._check_shield(target, attacker):
+                hit_status["blocked"] = True
+                # 判断目标是玩家还是敌方：攻击方在allies中说明是玩家攻击，目标是敌方
+                side = "enemy" if attacker in allies else "player"
+                self._last_damage_info[side][target.character.name] = hit_status
                 results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
                 continue
+
+            # 检查减伤
+            dmg_reduce_mult, _ = target.get_buff_multiplier("减伤")
+            if dmg_reduce_mult > 0:
+                hit_status["reduced"] = True
+
+            # 记录受击状态
+            side = "enemy" if attacker in allies else "player"
+            self._last_damage_info[side][target.character.name] = hit_status
 
             target.current_hp -= damage
             has_damage_this_attack = True
@@ -1244,7 +1376,7 @@ class BattleSystem:
             else:
                 results.append(f"{target_name} ({damage}伤害) [{damage_type}]")
 
-        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时
+        # ===== P5: 被攻击时触发 =====
         if allies and has_damage_this_attack:
             sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
             assist_sp += sp; results.extend(a_logs)
@@ -1325,7 +1457,7 @@ class BattleSystem:
             buff_results = self._apply_skill_effect(attacker, attacker.character.skill, allies, enemies)
             results.extend(buff_results)
 
-        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时 / 技能时
+        # ===== P5: 被攻击时触发 + 技能时 =====
         if allies and has_damage_this_attack:
             sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
             assist_sp += sp; results.extend(a_logs)
@@ -1413,7 +1545,7 @@ class BattleSystem:
             buff_results = self._apply_skill_effect(attacker, ultimate, allies, enemies)
             results.extend(buff_results)
 
-        # A卡触发: 对敌方造成伤害时 / 对敌方暴击时 / 必杀时
+        # ===== P5: 被攻击时触发 + 必杀时 =====
         if allies and has_damage_this_attack:
             sp, a_logs = self.trigger_assist_effects(attacker, allies, enemies, '对敌方造成伤害时')
             assist_sp += sp; results.extend(a_logs)
@@ -1432,7 +1564,8 @@ class BattleSystem:
                                enemies: List[BattleUnit], trigger_type: str = "行动开始时") -> Tuple[int, List[str]]:
         """触发支援卡效果，返回(SP变化量, 日志列表)"""
         total_sp_gained = 0
-        all_logs = []
+        raw_logs = []
+        cd_logs = []
 
         if not unit.assist_unit:
             return 0, []
@@ -1448,19 +1581,48 @@ class BattleSystem:
             if assist_char.assist_effect1.trigger_time == trigger_type:
                 sp, logs = self._apply_assist_effect(unit, assist_char.assist_effect1, allies, enemies)
                 total_sp_gained += sp
-                all_logs.extend(logs)
+                raw_logs.extend(logs)
                 assist_char.assist_effect1.current_count += 1
+                assist_char.assist_effect1.current_cd = assist_char.assist_effect1.cd  # 触发后设置冷却
+                if assist_char.assist_effect1.cd > 0:
+                    cd_logs.append(f"  [A卡CD] {assist_char.name} 效果1进入冷却({assist_char.assist_effect1.cd}回合)")
 
         # 检查效果2
         if assist_char.assist_effect2 and assist_char.assist_effect2.is_ready():
             if assist_char.assist_effect2.trigger_time == trigger_type:
                 sp, logs = self._apply_assist_effect(unit, assist_char.assist_effect2, allies, enemies)
                 total_sp_gained += sp
-                all_logs.extend(logs)
+                raw_logs.extend(logs)
                 assist_char.assist_effect2.current_count += 1
+                assist_char.assist_effect2.current_cd = assist_char.assist_effect2.cd  # 触发后设置冷却
+                if assist_char.assist_effect2.cd > 0:
+                    cd_logs.append(f"  [A卡CD] {assist_char.name} 效果2进入冷却({assist_char.assist_effect2.cd}回合)")
+
+        # 合并同角色BUFF为一行: "角色名 BUFF1, BUFF2, ... [A]"
+        import re as _re
+        consolidated = {}
+        for log_line in raw_logs:
+            m = _re.match(r'^(.+?) (.+?) \[A\]$', log_line)
+            if m:
+                name = m.group(1)
+                effect = m.group(2)
+                if name not in consolidated:
+                    consolidated[name] = []
+                consolidated[name].append(effect)
+            else:
+                # 非标准格式，保留原样
+                consolidated.setdefault('__raw__', []).append(log_line)
+
+        all_logs = []
+        for name, effects in consolidated.items():
+            if name == '__raw__':
+                all_logs.extend(effects)
+            else:
+                all_logs.append(f"{name} {', '.join(effects)} [A]")
+        all_logs.extend(cd_logs)
 
         return total_sp_gained, all_logs
-    
+
     def _apply_assist_effect(self, source_unit: BattleUnit, effect: AssistEffect,
                             allies: List[BattleUnit], enemies: List[BattleUnit]) -> Tuple[int, List[str]]:
         """应用支援卡效果，返回(SP变化量, 日志列表)"""
@@ -1469,203 +1631,223 @@ class BattleSystem:
 
         # 确定目标
         targets = []
+        area = effect.area
 
-        if "自身" in effect.area:
+        if "自身以外" in area:
+            targets = [u for u in allies if not u.is_assist and u.alive and u != source_unit]
+        elif "我方一对角色" in area:
+            # 自身 + 相邻1格的友方（5列布局中相邻即±1）
             targets = [source_unit]
-        elif "我方全体" in effect.area:
-            targets = [u for u in allies if not u.is_assist and u.alive]
-        elif "敌全体" in effect.area:
-            targets = enemies[:]
-        elif "同色" in effect.area:
+            for ally in allies:
+                if ally != source_unit and not ally.is_assist and ally.alive:
+                    if abs((ally.position % 5) - (source_unit.position % 5)) == 1:
+                        targets.append(ally)
+                        break
+        elif "我方全体" in area:
+            targets = [u for u in allies if not u.is_assist and u.alive and u.position < 5]
+        elif "敌全体" in area:
+            targets = [e for e in enemies if not e.is_assist and e.alive and e.position < 5]
+        elif "色敌全体" in area:
+            # X色敌全体
+            color_match = re.match(r'(红|绿|蓝|黄|紫)色敌全体', area)
+            if color_match:
+                target_color = color_match.group(1)
+                targets = [e for e in enemies if not e.is_assist and e.alive and e.position < 5 and
+                          self._get_base_attribute(e.character.attribute) == target_color]
+        elif "该敌方角色" in area:
+            # 攻击目标方向的第一个敌人
+            dir_targets = self.get_targets_in_direction(source_unit, enemies)
+            targets = dir_targets[:1] if dir_targets else []
+        elif "同色" in area:
             source_attr = self._get_base_attribute(source_unit.character.attribute)
-            if "我方" in effect.area:
-                targets = [u for u in allies if not u.is_assist and u.alive and
+            if "我方" in area:
+                targets = [u for u in allies if not u.is_assist and u.alive and u.position < 5 and
                           self._get_base_attribute(u.character.attribute) == source_attr]
             else:
-                targets = [e for e in enemies if self._get_base_attribute(e.character.attribute) == source_attr]
+                targets = [e for e in enemies if not e.is_assist and e.alive and e.position < 5 and
+                          self._get_base_attribute(e.character.attribute) == source_attr]
         else:
             targets = [source_unit]
 
-        # 应用效果
+        # 应用效果（使用解析出的持续回合数）
+        dur = effect.duration if effect.duration > 0 else 0
         for effect_text in (effect.effects or []):
             if not isinstance(effect_text, str): continue
-            # 攻击buff
-            m = re.match(r'物攻提升\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in allies:
-                        self._apply_buff(target, "攻击", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 攻击提升({magnitude}) [A]")
 
-            # 防御buff
-            m = re.match(r'物防提升\((.+?)\)', effect_text)
+            # === buff类 ===
+            # 物攻/异攻 统一映射为"攻击"buff
+            m = re.match(r'(物|异)攻提升\((.+?)\)', effect_text)
             if m:
-                magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "防御", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 防御提升({magnitude}) [A]")
+                        self._apply_buff(target, "攻击", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} {m.group(1)}攻提升({m.group(2)}) [A]")
+
+            # 物防/异防 统一映射为"防御"buff
+            m = re.match(r'(物|异)防提升\((.+?)\)', effect_text)
+            if m:
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "防御", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} {m.group(1)}防提升({m.group(2)}) [A]")
 
             # 暴伤buff
             m = re.match(r'暴伤提升\((.+?)\)', effect_text)
             if m:
-                magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "暴伤", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 暴伤提升({magnitude}) [A]")
+                        self._apply_buff(target, "暴伤", m.group(1), "a卡", dur)
+                        logs.append(f"{target.character.name} 暴伤提升({m.group(1)}) [A]")
 
-            # 必杀威力buff
-            m = re.match(r'必杀威力提升\((.+?)\)', effect_text)
+            # 必杀/技能威力buff
+            m = re.match(r'(必杀|技能)威力提升\((.+?)\)', effect_text)
             if m:
-                magnitude = m.group(1)
+                buf_name = m.group(1) + "威力"
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "必杀威力", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 必杀威力提升({magnitude}) [A]")
+                        self._apply_buff(target, buf_name, m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} {buf_name}提升({m.group(2)}) [A]")
 
-            # 技能威力buff
-            m = re.match(r'技能威力提升\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in allies:
-                        self._apply_buff(target, "技能威力", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 技能威力提升({magnitude}) [A]")
-
-            # 暴击率buff
-            m = re.match(r'暴击率提升\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in allies:
-                        self._apply_buff(target, "暴击率", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 暴击率提升({magnitude}) [A]")
-
-            # 回避率buff
-            m = re.match(r'回避率提升\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in allies:
-                        self._apply_buff(target, "回避率", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 回避率提升({magnitude}) [A]")
+            # 暴击率 / 回避率 / 暴击防御buff
+            for rate_type in ['暴击率', '回避率', '暴击防御']:
+                m = re.match(fr'{rate_type}提升\((.+?)\)', effect_text)
+                if m:
+                    buf_name = rate_type
+                    for target in targets:
+                        if target in allies:
+                            self._apply_buff(target, buf_name, m.group(1), "a卡", dur)
+                            logs.append(f"{target.character.name} {buf_name}提升({m.group(1)}) [A]")
 
             # SP获得量buff
             m = re.match(r'SP获得量提升\((.+?)\)', effect_text)
             if m:
-                magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "SP获得量", magnitude, "a卡")
-                        logs.append(f"{target.character.name} SP获得量提升({magnitude}) [A]")
+                        self._apply_buff(target, "SP获得量", m.group(1), "a卡", dur)
+                        logs.append(f"{target.character.name} SP获得量提升({m.group(1)}) [A]")
 
             # 减伤buff
             m = re.match(r'[^【]*减伤\((.+?)\)', effect_text)
             if m:
-                magnitude = m.group(1)
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "减伤", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 减伤({magnitude}) [A]")
+                        self._apply_buff(target, "减伤", m.group(1), "a卡", dur)
+                        logs.append(f"{target.character.name} 减伤({m.group(1)}) [A]")
 
-            # SP获得
-            # 格式1: SP([0-9]+)上升 - 固定SP上升（如SP10上升）
-            m = re.match(r'SP([0-9]+)上升', effect_text)
+            # 对X色威力提升
+            m = re.match(r'对(红|绿|蓝|黄|紫)色威力提升\((.+?)\)', effect_text)
             if m:
-                sp_amount = int(m.group(1))
-                sp_gained += sp_amount
-            
-            # 格式2: 根据(..侧|.色)数量SP(大)?上升 - 根据某侧或某色数量SP上升
-            m = re.match(r'根据(..侧|.色)数量SP(大)?上升', effect_text)
-            if m:
-                condition = m.group(1)  # 如"前侧"、"红"等
-                is_large = m.group(2) == "大"
-                sp_base = 10 if is_large else 5
-                
-                # 计算符合条件的己方角色数量
-                count = 0
-                for ally in allies:
-                    if ally.is_assist or not ally.alive:
-                        continue
-                    ally_attr = self._get_base_attribute(ally.character.attribute)
-                    # 检查是侧还是颜色
-                    if condition.endswith("侧"):
-                        # 前侧: 位置0, 后侧: 位置2
-                        if condition == "前侧" and ally.position % 3 == 0:
-                            count += 1
-                        elif condition == "后侧" and ally.position % 3 == 2:
-                            count += 1
-                    else:
-                        # 颜色
-                        if ally_attr == condition:
-                            count += 1
-                
-                # 给符合条件的己方角色增加SP
-                sp_amount = sp_base * count
-                sp_gained += sp_amount
-            
-            # 防御debuff
-            m = re.match(r'物防下降\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in enemies:
-                        self._apply_debuff(target, "防御", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 防御下降({magnitude}) [A]")
-
-            # 颜色耐性debuff
-            m = re.match(r'.色耐性下降\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in enemies:
-                        self._apply_debuff(target, "颜色耐性", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 颜色耐性下降({magnitude}) [A]")
-
-            # 暴击率debuff
-            m = re.match(r'暴击率下降\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in enemies:
-                        self._apply_debuff(target, "暴击率", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 暴击率下降({magnitude}) [A]")
-
-            # 回避率debuff
-            m = re.match(r'回避率下降\((.+?)\)', effect_text)
-            if m:
-                magnitude = m.group(1)
-                for target in targets:
-                    if target in enemies:
-                        self._apply_debuff(target, "回避率", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 回避率下降({magnitude}) [A]")
-
-            # 盾（支援卡）
-            if '盾' in effect_text and not re.match(r'.+\(.+\)', effect_text):
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "盾", "中", "a卡")
-                        logs.append(f"{target.character.name} 获得盾 [A]")
+                        self._apply_buff(target, "颜色威力", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} 颜色威力提升({m.group(2)}) [A]")
 
-            # 贯通（支援卡）
-            if '贯通' in effect_text and not re.match(r'.+\(.+\)', effect_text):
+            # X色减伤
+            m = re.match(r'(红|绿|蓝|黄|紫)色减伤\((.+?)\)', effect_text)
+            if m:
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "贯通", "中", "a卡")
-                        logs.append(f"{target.character.name} 获得贯通 [A]")
+                        self._apply_buff(target, "减伤", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} 减伤({m.group(2)}) [A]")
 
-            # 不屈（支援卡）
+            # 特殊buff（无幅度，默认"中"）
+            for sp_buf in ['盾', '贯通', '强耐', '弱耐']:
+                if sp_buf in effect_text and not re.search(rf'{sp_buf}\(.+?\)', effect_text):
+                    for target in targets:
+                        if target in allies:
+                            self._apply_buff(target, sp_buf, "中", "a卡", dur)
+                            logs.append(f"{target.character.name} 获得{sp_buf} [A]")
+
+            # 不屈
             m = re.match(r'不屈(?:\((.+?)\))?', effect_text)
             if m:
-                magnitude = m.group(1) or "中"
                 for target in targets:
                     if target in allies:
-                        self._apply_buff(target, "不屈", magnitude, "a卡")
-                        logs.append(f"{target.character.name} 获得不屈({magnitude}) [A]")
+                        mag = m.group(1) or "中"
+                        self._apply_buff(target, "不屈", mag, "a卡", dur)
+                        logs.append(f"{target.character.name} 获得不屈({mag}) [A]")
 
-            # HP回复（支援卡）
+            # 必暴
+            if '必暴' in effect_text:
+                for target in targets:
+                    if target in allies:
+                        self._apply_buff(target, "必暴", "中", "a卡", dur)
+                        logs.append(f"{target.character.name} 获得必暴 [A]")
+
+            # === debuff类（施加给敌方）===
+            # 物攻/异攻 下降 → 统一映射为"攻击"debuff
+            m = re.match(r'(物|异)攻下降\((.+?)\)', effect_text)
+            if m:
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "攻击", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} {m.group(1)}攻下降({m.group(2)}) [A]")
+
+            # 物防/异防 下降 → 统一映射为"防御"debuff
+            m = re.match(r'(物|异)防下降\((.+?)\)', effect_text)
+            if m:
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "防御", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} {m.group(1)}防下降({m.group(2)}) [A]")
+
+            # 暴击率/回避率下降
+            for rate_type in ['暴击率', '回避率']:
+                m = re.match(fr'{rate_type}下降\((.+?)\)', effect_text)
+                if m:
+                    for target in targets:
+                        if target in enemies:
+                            self._apply_debuff(target, rate_type, m.group(1), "a卡", dur)
+                            logs.append(f"{target.character.name} {rate_type}下降({m.group(1)}) [A]")
+
+            # 颜色耐性下降
+            m = re.match(r'(红|绿|蓝|黄|紫)色耐性下降\((.+?)\)', effect_text)
+            if m:
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "颜色耐性", m.group(2), "a卡", dur)
+                        logs.append(f"{target.character.name} 颜色耐性下降({m.group(2)}) [A]")
+
+            # SP获得量下降
+            m = re.match(r'SP获得量下降\((.+?)\)', effect_text)
+            if m:
+                for target in targets:
+                    if target in enemies:
+                        self._apply_debuff(target, "SP获得量", m.group(1), "a卡", dur)
+                        logs.append(f"{target.character.name} SP获得量下降({m.group(1)}) [A]")
+
+            # 特殊debuff（无幅度）
+            for sp_deb in ['感电', '气绝', '移动不能', '制御不能', 'a卡封印',
+                          '技能封印', '必杀封印', '强化妨害', '攻击提升妨害',
+                          'HP回复妨害', '弱体化解除妨害']:
+                if sp_deb in effect_text:
+                    for target in targets:
+                        if target in enemies:
+                            self._apply_debuff(target, sp_deb, "中", "a卡", dur)
+                            logs.append(f"{target.character.name} {sp_deb} [A]")
+
+            # === 状态解除 ===
+            for clr_type, clr_target in [('弱体状态解除', 'debuff'), ('强化状态解除', 'buff')]:
+                if clr_type in effect_text:
+                    if clr_target == 'debuff':
+                        clear_targets = [t for t in targets if t in allies]
+                        for t in clear_targets:
+                            removed = [d.name for d in list(t.debuffs)
+                                      if d.name not in ('弱体化解除妨害',)]
+                            for d_name in removed:
+                                t.debuffs = [d for d in t.debuffs if d.name != d_name]
+                            if removed:
+                                logs.append(f"{t.character.name} 弱体状态解除: {', '.join(removed)} [A]")
+                    else:
+                        clear_targets = [t for t in targets if t in enemies]
+                        for t in clear_targets:
+                            removed = [b.name for b in list(t.buffs)]
+                            for b_name in removed:
+                                t.buffs = [b for b in t.buffs if b.name != b_name]
+                            if removed:
+                                logs.append(f"{t.character.name} 强化状态解除: {', '.join(removed)} [A]")
+
+            # === HP回复 ===
             m = re.match(r'HP回复\((.+?)\)', effect_text)
             if m:
                 magnitude = m.group(1)
@@ -1679,6 +1861,50 @@ class BattleSystem:
                         t.current_hp = min(t.max_hp, t.current_hp + heal_amount)
                         logs.append(f"{t.character.name} HP回复+{heal_amount} [A]")
 
+            # === 技能CD减少 ===
+            m = re.match(r'技能CD减(\d+)', effect_text)
+            if m:
+                cd_reduce = int(m.group(1))
+                for t in targets:
+                    if t in allies and t.alive:
+                        t.skill_cooldown = max(0, t.skill_cooldown - cd_reduce)
+                        logs.append(f"{t.character.name} 技能CD-{cd_reduce} [A]")
+
+            # 必杀CD减少 (スキル,必杀CD减X = both)
+            m = re.match(r'.*必杀CD减(\d+)', effect_text)
+            if m:
+                cd_reduce = int(m.group(1))
+                for t in targets:
+                    if t in allies and t.alive:
+                        t.ult_cooldown = max(0, t.ult_cooldown - cd_reduce)
+                        logs.append(f"{t.character.name} 必杀CD-{cd_reduce} [A]")
+
+            # === SP获得 ===
+            # SP固定上升
+            m = re.match(r'SP(\d+)上升', effect_text)
+            if m:
+                sp_gained += int(m.group(1))
+                logs.append(f"SP+{m.group(1)} [A]")
+
+            # 根据X侧/Y色数量SP上升
+            m = re.match(r'根据(..侧|.色)数量SP(大)?上升', effect_text)
+            if m:
+                condition = m.group(1)
+                sp_base = 10 if m.group(2) == "大" else 5
+                count = 0
+                for ally in allies:
+                    if ally.is_assist or not ally.alive:
+                        continue
+                    if condition.endswith("侧"):
+                        if condition == "前侧" and ally.position % 5 == 0:
+                            count += 1
+                        elif condition == "后侧" and ally.position % 5 == BATTLE_POSITIONS_ON_FIELD - 1:
+                            count += 1
+                    else:
+                        if self._get_base_attribute(ally.character.attribute) == condition:
+                            count += 1
+                sp_gained += sp_base * count
+
         return sp_gained, logs
 
     def _apply_skill_effect(self, attacker: BattleUnit, skill: Skill, 
@@ -1691,14 +1917,14 @@ class BattleSystem:
         is_ally_target = False
         
         if "我方全体" in skill.area:
-            targets = [u for u in allies if not u.is_assist and u.alive]
+            targets = [u for u in allies if not u.is_assist and u.alive and u.position < 5]
             is_ally_target = True
         elif "自身" in skill.area or "正面" in skill.area or "左侧" in skill.area or "右侧" in skill.area:
             targets = [attacker]
             is_ally_target = True
         elif "同色" in skill.area:
             source_attr = self._get_base_attribute(attacker.character.attribute)
-            targets = [u for u in allies if not u.is_assist and u.alive and 
+            targets = [u for u in allies if not u.is_assist and u.alive and
                       self._get_base_attribute(u.character.attribute) == source_attr]
             is_ally_target = True
         else:
@@ -1973,7 +2199,7 @@ class BattleSystem:
         :return: 行动类型 "ultimate"/"skill"/"normal"
         """
         # 1. 大招就绪且可以一击必杀 -> 大招
-        if side_sp >= SP_MAX and self._can_one_shot_kill(unit, enemies, "ultimate"):
+        if side_sp >= ULT_COST and self._can_one_shot_kill(unit, enemies, "ultimate"):
             return "ultimate"
         
         # 2. 技能就绪且可以一击必杀 -> 技能
@@ -1981,77 +2207,272 @@ class BattleSystem:
             return "skill"
         
         # 3. 正常优先级：大招 > 技能 > 普攻
-        if side_sp >= SP_MAX:
+        if side_sp >= ULT_COST:
             return "ultimate"
         if unit.skill_cooldown == 0 and side_sp >= 30:
             return "skill"
         return "normal"
     
-    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player", initial_player_sp: int = 0) -> dict:
+    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player", initial_player_sp: int = 0, extra_characters: dict = None) -> dict:
         """开始战斗"""
         log_battle("=" * 50)
         log_battle("战斗开始！")
 
-        player_units = self.build_battle_team(player_team)
-        enemy_units = self.build_battle_team(enemy_team)
+        player_units = self.build_battle_team(player_team, extra_characters)
+        enemy_units = self.build_battle_team(enemy_team, extra_characters)
 
-        # 给角色名加位置箭头: 友方=↙↓↘, 敌方=↖↑↗
-        for u in player_units:
-            if not u.is_assist:
-                arrows = {0:'↙',1:'↓',2:'↘'}
-                u.character.name = f'{u.character.name}[{arrows[u.position%3]}]'
-        for u in enemy_units:
-            if not u.is_assist:
-                arrows = {0:'↖',1:'↑',2:'↗'}
-                u.character.name = f'{u.character.name}[{arrows[u.position%3]}]'
+        # 给角色名加位置箭头: 友方5列, 敌方5列
+        p_arrows = {0:'↙', 1:'←', 2:'↓', 3:'→', 4:'↘'}
+        e_arrows = {0:'↖', 1:'←', 2:'↑', 3:'→', 4:'↗'}
 
         # 阵营SP池（共用SP）
         player_sp = initial_player_sp
         enemy_sp = 0
-        
+
         battle_log = []
+        parsable_battle_log = []
         
-        for round_num in range(1, MAX_BATTLE_ROUNDS + 1):
-            round_log = [f"\n{'='*50}\n第 {round_num} 回合\n{'='*50}"]
+        # 在记录战斗日志前添加位置箭头（确保箭头与实际位置一致）
+        p_arrows = ['↙', '←', '↓', '→', '↘']
+        e_arrows = ['↖', '←', '↑', '→', '↗']
+        
+        for u in player_units:
+            if not u.is_assist and u.position >= 0 and u.position < 5:
+                # 避免重复添加箭头
+                if '[' not in u.character.name or ']' not in u.character.name:
+                    u.character.name = f'{u.character.name}[{p_arrows[u.position]}]'
+        
+        for u in enemy_units:
+            if not u.is_assist and u.position >= 0 and u.position < 5:
+                # 避免重复添加箭头
+                if '[' not in u.character.name or ']' not in u.character.name:
+                    u.character.name = f'{u.character.name}[{e_arrows[u.position]}]'
+        
+        # 跟踪上一个状态的HP值，用于计算HP变化
+        last_player_hp = {u.character.name: u.current_hp for u in player_units if not u.is_assist}
+        last_enemy_hp = {u.character.name: u.current_hp for u in enemy_units if not u.is_assist}
+        
+        # 跟踪伤害事件信息（使用实例变量，以便在其他方法中访问）
+        self._last_damage_info = {"player": {}, "enemy": {}}
+        
+        def _log(text, parsable=None):
+            nonlocal last_player_hp, last_enemy_hp
+            """同时记录文本日志和可解析日志"""
+            # 计算当前HP变化
+            current_player_hp = {u.character.name: u.current_hp for u in player_units if not u.is_assist}
+            current_enemy_hp = {u.character.name: u.current_hp for u in enemy_units if not u.is_assist}
             
-            # ===== 整回合开始：CD递减 =====
+            def calc_hp_change(name, current_hp, last_hp_dict):
+                if name in last_hp_dict:
+                    delta = current_hp - last_hp_dict[name]
+                    if delta != 0:
+                        return delta
+                return 0
+            
+            def get_hit_status(name, side):
+                """获取受击状态（抵挡、反射、特殊BUFF）"""
+                status = ""
+                damage_info = self._last_damage_info.get(side, {}).get(name, {})
+                if damage_info.get("blocked", False):
+                    status += "抵挡"
+                if damage_info.get("reflected", False):
+                    status += "反射"
+                if damage_info.get("absorbed", False):
+                    status += "吸收"
+                if damage_info.get("reduced", False):
+                    status += "减伤"
+                return status
+            
+            if isinstance(text, list):
+                for t in text:
+                    battle_log.append(t)
+                    if parsable:
+                        if isinstance(parsable, list) and len(parsable) > 0:
+                            entry = parsable.pop(0)
+                        else:
+                            entry = {"type": "text", "content": t}
+                    else:
+                        entry = {"type": "text", "content": t}
+                    
+                    entry["player_positions"] = [
+                        {"name": u.character.name, "position": u.position, "alive": u.alive, "hp": u.current_hp, "max_hp": u.max_hp,
+                         "hp_change": calc_hp_change(u.character.name, u.current_hp, last_player_hp),
+                         "hit_status": get_hit_status(u.character.name, "player"),
+                         "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
+                         "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs]}
+                        for u in player_units if not u.is_assist
+                    ]
+                    entry["enemy_positions"] = [
+                        {"name": u.character.name, "position": u.position, "alive": u.alive, "hp": u.current_hp, "max_hp": u.max_hp,
+                         "hp_change": calc_hp_change(u.character.name, u.current_hp, last_enemy_hp),
+                         "hit_status": get_hit_status(u.character.name, "enemy"),
+                         "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
+                         "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs]}
+                        for u in enemy_units if not u.is_assist
+                    ]
+                    parsable_battle_log.append(entry)
+            else:
+                battle_log.append(text)
+                if parsable:
+                    entry = parsable
+                else:
+                    entry = {"type": "text", "content": text}
+                
+                entry["player_positions"] = [
+                    {"name": u.character.name, "position": u.position, "alive": u.alive, "hp": u.current_hp, "max_hp": u.max_hp,
+                     "hp_change": calc_hp_change(u.character.name, u.current_hp, last_player_hp),
+                     "hit_status": get_hit_status(u.character.name, "player"),
+                     "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
+                     "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs]}
+                    for u in player_units if not u.is_assist
+                ]
+                entry["enemy_positions"] = [
+                    {"name": u.character.name, "position": u.position, "alive": u.alive, "hp": u.current_hp, "max_hp": u.max_hp,
+                     "hp_change": calc_hp_change(u.character.name, u.current_hp, last_enemy_hp),
+                     "hit_status": get_hit_status(u.character.name, "enemy"),
+                     "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
+                     "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs]}
+                    for u in enemy_units if not u.is_assist
+                ]
+                parsable_battle_log.append(entry)
+            
+            # 更新上一个状态的HP值
+            last_player_hp = current_player_hp
+            last_enemy_hp = current_enemy_hp
+            # 重置伤害信息
+            self._last_damage_info = {"player": {}, "enemy": {}}
+
+        # ===== P1: 开场被动 — 初始上场3人占0/2/4，替补放在替补队列 =====
+        player_alive_all = [u for u in player_units if not u.is_assist and u.alive]
+        enemy_alive_all = [u for u in enemy_units if not u.is_assist and u.alive]
+        
+        # 场上位置只使用0-4，替补角色位置设为-1表示在替补队列
+        for i, u in enumerate(player_alive_all):
+            if i < 3:
+                u.position = INITIAL_FIELD_POSITIONS[i]
+            else:
+                u.position = -1  # 替补队列
+        for i, u in enumerate(enemy_alive_all):
+            if i < 3:
+                u.position = INITIAL_FIELD_POSITIONS[i]
+            else:
+                u.position = -1  # 替补队列
+        
+        # 位置确定后再加箭头（确保箭头与实际位置一致）
+        for u in player_units:
+            if not u.is_assist:
+                if u.position >= 0:
+                    u.character.name = f'{u.character.name}[{p_arrows[u.position]}]'
+        for u in enemy_units:
+            if not u.is_assist:
+                if u.position >= 0:
+                    u.character.name = f'{u.character.name}[{e_arrows[u.position]}]'
+        
+        player_starters = player_alive_all[:INITIAL_DEPLOY_COUNT]
+        enemy_starters = enemy_alive_all[:INITIAL_DEPLOY_COUNT]
+        # 在记录战斗日志前添加位置箭头（确保箭头与实际位置一致）
+        p_arrows = ['↙', '←', '↓', '→', '↘']
+        e_arrows = ['↖', '←', '↑', '→', '↗']
+        
+        for u in player_units:
+            if not u.is_assist and u.position >= 0 and u.position < 5:
+                # 避免重复添加箭头
+                if '[' not in u.character.name or ']' not in u.character.name:
+                    u.character.name = f'{u.character.name}[{p_arrows[u.position]}]'
+        
+        for u in enemy_units:
+            if not u.is_assist and u.position >= 0 and u.position < 5:
+                # 避免重复添加箭头
+                if '[' not in u.character.name or ']' not in u.character.name:
+                    u.character.name = f'{u.character.name}[{e_arrows[u.position]}]'
+        
+        for unit in player_starters:
+            sp_gained, p1_logs = self.trigger_assist_effects(unit, player_starters, enemy_starters, '行动开始时')
+            player_sp = self.add_sp(player_sp, sp_gained)
+            battle_log.extend(p1_logs)
+        for unit in enemy_starters:
+            sp_gained, p1_logs = self.trigger_assist_effects(unit, enemy_starters, player_starters, '行动开始时')
+            enemy_sp = self.add_sp(enemy_sp, sp_gained)
+            battle_log.extend(p1_logs)
+
+        for round_num in range(1, MAX_BATTLE_ROUNDS + 1):
+            round_title = f"\n{'='*50}\n第 {round_num} 回合\n{'='*50}"
+            _log(round_title, {"type": "round_start", "round": round_num})
+            round_log = []
+
+            # ===== P1: 波次/回合开始 — CD递减 + 回合开始触发 =====
             for unit in player_units + enemy_units:
                 if unit.skill_cooldown > 0: unit.skill_cooldown -= 1
                 if unit.ult_cooldown > 0: unit.ult_cooldown -= 1
                 if unit.assist_skill1_cd > 0: unit.assist_skill1_cd -= 1
                 if unit.assist_skill2_cd > 0: unit.assist_skill2_cd -= 1
+                # A卡效果冷却递减
+                if unit.assist_unit:
+                    ae1 = unit.assist_unit.character.assist_effect1
+                    ae2 = unit.assist_unit.character.assist_effect2
+                    if ae1 and ae1.current_cd > 0:
+                        ae1.current_cd -= 1
+                    if ae2 and ae2.current_cd > 0:
+                        ae2.current_cd -= 1
 
             # 检查胜负（全部6个战斗单位阵亡才结束）
             player_alive_all = [u for u in player_units if not u.is_assist and u.alive]
             enemy_alive_all = [u for u in enemy_units if not u.is_assist and u.alive]
 
             if len(player_alive_all) == 0:
-                round_log.append("玩家队伍全灭！")
-                round_log.append("敌方胜利！")
-                return self._create_result("enemy", round_num, battle_log + round_log, player_units, enemy_units)
+                _log("玩家队伍全灭！", {"type": "battle_end", "winner": "enemy", "reason": "player_dead"})
+                _log("敌方胜利！", {"type": "battle_end", "winner": "enemy", "reason": "player_dead"})
+                return self._create_result("enemy", round_num, battle_log, parsable_battle_log, player_units, enemy_units)
 
             if len(enemy_alive_all) == 0:
-                round_log.append("敌方全灭！")
-                round_log.append("玩家队伍胜利！")
-                return self._create_result("player", round_num, battle_log + round_log, player_units, enemy_units)
+                _log("敌方全灭！", {"type": "battle_end", "winner": "player", "reason": "enemy_dead"})
+                _log("玩家队伍胜利！", {"type": "battle_end", "winner": "player", "reason": "enemy_dead"})
+                return self._create_result("player", round_num, battle_log, parsable_battle_log, player_units, enemy_units)
 
-            # 刷新场上单位（前3个存活）
-            player_on_field = player_alive_all[:3]
+            # 刷新场上单位（初始3人已在P1分配0/2/4列，之后保持位置）
+            player_on_field = player_alive_all[:INITIAL_DEPLOY_COUNT]
             player_on_field.sort(key=lambda x: x.position)
-            enemy_on_field = enemy_alive_all[:3]
+            enemy_on_field = enemy_alive_all[:INITIAL_DEPLOY_COUNT]
             enemy_on_field.sort(key=lambda x: x.position)
             
             # ===== 半回合处理 =====
+            # 优先级: P2替补→P3行动开始→P4攻击→P5被攻击→P6 HP阈值→P7 SP满→P8 Break
             def half_turn(side_units, side_enemies, all_units, side_sp, tag, round_log):
                 """执行半回合，返回(攻击方新SP, 防守方获得SP)"""
                 defender_sp_total = 0  # 防守方本回合被攻击获得的SP
-                # 1. 替补上场
-                # 只补到3人
-                alive_bench = sorted([u for u in all_units if not u.is_assist and u.alive and u not in side_units], key=lambda x: x.position)
-                needed = max(0, 3 - len(side_units))
-                for u in alive_bench[:needed]:
+
+                # ===== P2: 替补入场（继承阵亡单位的位置）=====
+                # 从替补队列中获取可用替补（position=-1表示在替补队列）
+                alive_bench = sorted([u for u in all_units if not u.is_assist and u.alive and u.position == -1], key=lambda x: x.character.name)
+                needed = max(0, INITIAL_DEPLOY_COUNT - len(side_units))
+                # 找出阵亡单位的位置
+                dead_positions = []
+                for u in all_units:
+                    if not u.is_assist and not u.alive:
+                        pos = u.position
+                        if pos >= 0 and pos < 5 and pos not in dead_positions:
+                            dead_positions.append(pos)
+                dead_positions.sort()
+                for i, u in enumerate(alive_bench[:needed]):
+                    # 替补继承阵亡位置（按原顺序分配）
+                    if i < len(dead_positions):
+                        u.position = dead_positions[i]
                     side_units.append(u)
-                    round_log.append(f'  [上场] [{tag}] {u.character.name}')
+                    # 记录替补位置信息到日志（避免重复箭头）
+                    dir_map = {'P': {0:'↙',1:'←',2:'↓',3:'→',4:'↘'}, 'E': {0:'↖',1:'←',2:'↑',3:'→',4:'↗'}}
+                    arrow = dir_map.get(tag, {}).get(u.position, '?')
+                    base_name = re.sub(r'\[[↙←↓→↘↖↑↗]\]$', '', u.character.name)
+                    u.character.name = f'{base_name}[{arrow}]'
+                    _log(f'  [上场] [{tag}] {base_name}[{arrow}]', {
+                        "type": "enter",
+                        "side": tag,
+                        "name": base_name,
+                        "arrow": arrow,
+                        "position": u.position
+                    })
+                    sp_gained, e_logs = self.trigger_assist_effects(u, side_units, side_enemies, '替补入场时')
+                    side_sp = self.add_sp(side_sp, sp_gained)
+                    round_log.extend(e_logs)
                 side_units.sort(key=lambda x: x.position)
                 if not side_units: return side_sp, 0
 
@@ -2060,25 +2481,35 @@ class BattleSystem:
                 immobile_units = [u for u in side_units if u not in mobile_units]
                 if len(mobile_units) == 1 and len(side_units) == 1:
                     u = mobile_units[0]
-                    best_col, best_cnt = u.position % 3, len(self.get_targets_in_direction(u, side_enemies))
-                    for col in [0,1,2]:
+                    best_col, best_cnt = u.position % 5, len(self.get_targets_in_direction(u, side_enemies))
+                    for col in ALL_FIELD_COLS:
                         u.position = col
                         cnt = len(self.get_targets_in_direction(u, side_enemies))
                         if cnt > best_cnt: best_cnt, best_col = cnt, col
-                    if u.position % 3 != best_col:
+                    if u.position % 5 != best_col:
                         u.position = best_col
                         for ac in all_units:
-                            if ac.is_assist and ac.position%3 == (best_col+3)%3: ac.position = best_col
-                        dir_map = {'P': {0:'↙', 1:'↓', 2:'↘'}, 'E': {0:'↖', 1:'↑', 2:'↗'}}
+                            if ac.is_assist and ac.position%5 == (best_col+3)%5: ac.position = best_col
+                        dir_map = {'P': {0:'↙',1:'←',2:'↓',3:'→',4:'↘'}, 'E': {0:'↖',1:'←',2:'↑',3:'→',4:'↗'}}
                         arrow = dir_map.get(tag, {}).get(best_col, '?')
-                        round_log.append(f'  [换位] [{tag}] {u.character.name} -> {arrow}')
+                        base_name = re.sub(r'\[[↙←↓→↘↖↑↗]\]$', '', u.character.name)
+                        _log(f'  [换位] [{tag}] {u.character.name} -> {arrow}', {
+                            "type": "swap",
+                            "side": tag,
+                            "name": base_name,
+                            "old_arrow": dir_map.get(tag, {}).get(u.position % 5, '?'),
+                            "new_arrow": arrow,
+                            "old_position": u.position % 5,
+                            "new_position": best_col
+                        })
+                        u.character.name = f'{base_name}[{arrow}]'
                 elif len(mobile_units) >= 2:
                     from itertools import permutations
                     # 只排列可移动单位，不可移动单位保持原位
-                    fixed_positions = {u.position % 3 for u in immobile_units}
+                    fixed_positions = {u.position % 5 for u in immobile_units}
                     best_total = sum(len(self.get_targets_in_direction(u, side_enemies)) for u in side_units)
                     best_assign = [(u, u.position) for u in mobile_units]
-                    available_cols = [c for c in [0,1,2] if c not in fixed_positions]
+                    available_cols = [c for c in ALL_FIELD_COLS if c not in fixed_positions]
                     if len(available_cols) >= len(mobile_units):
                         for perm in permutations(mobile_units):
                             saved = [(u, u.position) for u in mobile_units]
@@ -2098,21 +2529,73 @@ class BattleSystem:
                                 if ac.is_assist:
                                     if ac.position == old_pos: ac.position = new_pos
                                     elif ac.position == new_pos: ac.position = old_pos
-                            dir_map = {'P': {0:'↙', 1:'↓', 2:'↘'}, 'E': {0:'↖', 1:'↑', 2:'↗'}}
-                            arrow = dir_map.get(tag, {0:'_',1:'_',2:'_'}).get(new_pos%3, '?')
-                            round_log.append(f'  [换位] [{tag}] {unit.character.name} -> {arrow}')
+                            dir_map = {'P': {0:'↙',1:'←',2:'↓',3:'→',4:'↘'}, 'E': {0:'↖',1:'←',2:'↑',3:'→',4:'↗'}}
+                            arrow = dir_map.get(tag, {0:'_',1:'_',2:'_',3:'_',4:'_'}).get(new_pos%5, '?')
+                            old_arrow = dir_map.get(tag, {}).get(old_pos % 5, '?')
+                            base_name = re.sub(r'\[[↙←↓→↘↖↑↗]\]$', '', unit.character.name)
+                            _log(f'  [换位] [{tag}] {unit.character.name} -> {arrow}', {
+                                "type": "swap",
+                                "side": tag,
+                                "name": base_name,
+                                "old_arrow": old_arrow,
+                                "new_arrow": arrow,
+                                "old_position": old_pos % 5,
+                                "new_position": new_pos % 5
+                            })
+                            unit.character.name = f'{base_name}[{arrow}]'
                 if immobile_units:
                     for u in immobile_units:
                         round_log.append(f'  [移动不能] [{tag}] {u.character.name} 无法换位')
 
-                # 3. A卡
+                # ===== P3: 行动开始时触发 =====
+                # A卡效果 + 被动效果在此阶段触发
+                for unit in list(side_units):
+                    if unit.alive and unit.assist_unit:
+                        assist_char = unit.assist_unit.character
+                        # 检查是否有即将触发的效果
+                        will_trigger = False
+                        if assist_char.assist_effect1 and assist_char.assist_effect1.is_ready():
+                            if assist_char.assist_effect1.trigger_time == '行动开始时':
+                                will_trigger = True
+                        if assist_char.assist_effect2 and assist_char.assist_effect2.is_ready():
+                            if assist_char.assist_effect2.trigger_time == '行动开始时':
+                                will_trigger = True
+                        
+                        if will_trigger:
+                            # 记录A卡效果触发前的状态
+                            _log(f'  [A卡准备] {assist_char.name} 即将触发效果', {
+                                "type": "assist_prepare",
+                                "source_unit": unit.character.name,
+                                "source_position": unit.position,
+                                "assist_name": assist_char.name,
+                                "trigger_type": "行动开始时"
+                            })
+                
                 for unit in list(side_units):
                     if unit.alive:
-                        sp_gained, a_logs = self.trigger_assist_effects(unit, all_units, side_enemies, '行动开始时')
+                        sp_gained, a_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '行动开始时')
                         side_sp = self.add_sp(side_sp, sp_gained)
                         round_log.extend(a_logs)
+                        
+                        # 如果有A卡效果触发，记录触发后的状态
+                        if a_logs and unit.assist_unit:
+                            assist_char = unit.assist_unit.character
+                            # 解析日志中的效果信息
+                            effects_info = []
+                            for log_line in a_logs:
+                                if '[A]' in log_line:
+                                    effects_info.append(log_line)
+                            if effects_info:
+                                _log(f'  [A卡触发] {assist_char.name}', {
+                                    "type": "assist_trigger",
+                                    "source_unit": unit.character.name,
+                                    "source_position": unit.position,
+                                    "assist_name": assist_char.name,
+                                    "effects": effects_info,
+                                    "trigger_type": "行动开始时"
+                                })
 
-                # 3.5 持续被害（DoT）
+                # DoT (between P3 and P4)
                 dot_pcts = {'小': 0.03, '中': 0.05, '大': 0.08}
                 for unit in list(side_units):
                     if unit.alive:
@@ -2129,11 +2612,26 @@ class BattleSystem:
                                         if unit.assist_unit:
                                             unit.assist_unit.alive = False
                                         round_log.append(f'  [持续被害] {unit.character.name} 被DoT击破！')
+                                        # P10: 自身退场时触发
+                                        sp_gained, r_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '自身退场时')
+                                        side_sp = self.add_sp(side_sp, sp_gained)
+                                        round_log.extend(r_logs)
                                 break  # 每种持续被害只触发一次
 
-                # 4. 决策
+                # ===== P4: 攻击决策 =====
                 planned = {}
                 sp = side_sp
+
+                # ===== P7: 敌方SP满时触发 (在攻击方行动前，防御方SP满时触发) =====
+                # 检查防守方是否有人SP满了
+                opp_tag = 'E' if tag == 'P' else 'P'
+                for opp_unit in side_enemies:
+                    if opp_unit.alive and not opp_unit.is_assist:
+                        sp_gained, p7_logs = self.trigger_assist_effects(
+                            opp_unit, side_enemies, side_units, '敌方SP满时')
+                        side_sp = self.add_sp(side_sp, sp_gained)
+                        round_log.extend(p7_logs)
+
                 for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
                     has_ult = bool(unit.character.ultimate) if hasattr(unit.character, 'ultimate') else False
                     has_skill = bool(unit.character.skill) if hasattr(unit.character, 'skill') else False
@@ -2141,14 +2639,14 @@ class BattleSystem:
                     sealed_ult = any(d.name == '必杀封印' for d in unit.debuffs)
                     sealed_assist = any(d.name == 'a卡封印' for d in unit.debuffs)
                     has_targets = bool(self.get_targets_in_direction(unit, side_enemies))
-                    if has_targets and sp >= SP_MAX and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
-                        planned[id(unit)] = 'ultimate'; sp -= 100
+                    if has_targets and sp >= ULT_COST and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
+                        planned[id(unit)] = 'ultimate'; sp -= ULT_COST
                     elif has_targets and sp >= 30 and unit.skill_cooldown == 0 and not sealed_skill and has_skill:
                         planned[id(unit)] = 'skill'; sp -= 30
                     else:
                         planned[id(unit)] = 'normal'
 
-                # 6. 执行
+                # ===== P4+P5: 执行攻击 + 被攻击时触发（execute内部处理P5）=====
                 for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
                     if not unit.alive: continue
                     stunned = any(d.name in ('感电','气绝','制御不能') for d in unit.debuffs)
@@ -2160,37 +2658,118 @@ class BattleSystem:
                         continue
                     action = planned.get(id(unit), 'normal')
                     enemies = side_enemies
+
+                    # 记录攻击前HP（用于P6 HP阈值检测，含攻击方自身防反射）
+                    hp_before = {}
+                    for t in list(enemies) + [unit]:
+                        if t.alive:
+                            hp_before[id(t)] = t.current_hp
+
                     if action == 'ultimate':
-                        side_sp -= 100
-                        results, used, atk_sp, def_sp = self.execute_ultimate_attack(unit, enemies, True, all_units)
+                        side_sp -= ULT_COST
+                        results, used, atk_sp, def_sp = self.execute_ultimate_attack(unit, enemies, True, side_units)
                         round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
+                        # 立即记录攻击日志，确保HP变化及时反映
+                        attack_info = {
+                            "type": "attack",
+                            "attack_type": "终",
+                            "attacker": unit.character.name,
+                            "attacker_position": unit.position,
+                            "attacker_arrow": self._get_arrow_by_position(unit.position, 'P' if tag == 'P' else 'E'),
+                            "targets": [{"name": e.character.name, "position": e.position, "arrow": self._get_arrow_by_position(e.position, 'E' if tag == 'P' else 'P')} for e in enemies if e.alive]
+                        }
+                        _log(results[-1] if results else "", attack_info)
                     elif action == 'skill':
                         side_sp -= 30
-                        results, used, atk_sp, def_sp = self.execute_skill_attack(unit, enemies, True, 30, all_units)
+                        results, used, atk_sp, def_sp = self.execute_skill_attack(unit, enemies, True, 30, side_units)
                         round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
+                        # 立即记录攻击日志，确保HP变化及时反映
+                        attack_info = {
+                            "type": "attack",
+                            "attack_type": "技",
+                            "attacker": unit.character.name,
+                            "attacker_position": unit.position,
+                            "attacker_arrow": self._get_arrow_by_position(unit.position, 'P' if tag == 'P' else 'E'),
+                            "targets": [{"name": e.character.name, "position": e.position, "arrow": self._get_arrow_by_position(e.position, 'E' if tag == 'P' else 'P')} for e in enemies if e.alive]
+                        }
+                        _log(results[-1] if results else "", attack_info)
                     else:
-                        results, atk_sp, def_sp = self.execute_normal_attack(unit, enemies, all_units)
+                        results, atk_sp, def_sp = self.execute_normal_attack(unit, enemies, side_units)
                         round_log.extend(results); side_sp = self.add_sp(side_sp, atk_sp); defender_sp_total += def_sp
+                        # 立即记录攻击日志，确保HP变化及时反映
+                        attack_info = {
+                            "type": "attack",
+                            "attack_type": "普",
+                            "attacker": unit.character.name,
+                            "attacker_position": unit.position,
+                            "attacker_arrow": self._get_arrow_by_position(unit.position, 'P' if tag == 'P' else 'E'),
+                            "targets": [{"name": e.character.name, "position": e.position, "arrow": self._get_arrow_by_position(e.position, 'E' if tag == 'P' else 'P')} for e in enemies if e.alive]
+                        }
+                        _log(results[-1] if results else "", attack_info)
+
+                    # ===== P10: 自身退场时触发（击破时遗言效果）=====
+                    # 检查哪些敌方单位在本轮攻击中被击破
+                    dead_enemies = [e for e in enemies if id(e) in hp_before and not e.alive and hp_before[id(e)] > 0]
+                    for dead in dead_enemies:
+                        round_log.append(f'  [退场] {dead.character.name} 被击破！')
+                        # 触发死者自身的退场效果（allies=敌方，enemies=我方）
+                        sp_gained, r_logs = self.trigger_assist_effects(dead, side_enemies, side_units, '自身退场时')
+                        side_sp = self.add_sp(side_sp, sp_gained)
+                        round_log.extend(r_logs)
+                    # 检查攻击者是否被反射击杀
+                    if id(unit) in hp_before and not unit.alive and hp_before[id(unit)] > 0:
+                        round_log.append(f'  [退场] {unit.character.name} 被反射击破！')
+                        sp_gained, r_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '自身退场时')
+                        side_sp = self.add_sp(side_sp, sp_gained)
+                        round_log.extend(r_logs)
+
+                    # ===== P6: HP阈值触发 =====
+                    all_checked = set()
+                    for target in list(enemies) + [unit]:
+                        if not target.alive or id(target) in all_checked:
+                            continue
+                        if id(target) not in hp_before:
+                            continue
+                        all_checked.add(id(target))
+                        hp_pct = target.current_hp / target.max_hp if target.max_hp > 0 else 0
+                        hp_before_pct = hp_before[id(target)] / target.max_hp if target.max_hp > 0 else 0
+                        # target is in enemies → its allies are side_enemies
+                        target_allies = side_enemies if target in enemies else side_units
+                        target_enemies = side_units if target in enemies else side_enemies
+                        # HP跌破50%
+                        if hp_pct < 0.5 and hp_before_pct >= 0.5:
+                            round_log.append(f'  [HP阈值] {target.character.name} HP低于50%')
+                            sp_gained, hp_logs = self.trigger_assist_effects(target, target_allies, target_enemies, 'HP低于50%时')
+                            side_sp = self.add_sp(side_sp, sp_gained)
+                            round_log.extend(hp_logs)
+                        # HP跌破30%
+                        if hp_pct < 0.3 and hp_before_pct >= 0.3:
+                            round_log.append(f'  [HP阈值] {target.character.name} HP低于30%')
+                            sp_gained, hp_logs = self.trigger_assist_effects(target, target_allies, target_enemies, 'HP低于30%时')
+                            side_sp = self.add_sp(side_sp, sp_gained)
+                            round_log.extend(hp_logs)
+
                     side_units[:] = [u for u in side_units if u.alive]
                     side_enemies[:] = [e for e in side_enemies if e.alive]
                     if not side_units or not side_enemies: break
                 return side_sp, defender_sp_total
 
             # 半回合前刷新场上（替补进场由half_turn内部处理）
-            player_on_field = [u for u in player_units if not u.is_assist and u.alive][:3]
+            # 只取3人上场，保持原有位置
+            player_on_field = [u for u in player_units if not u.is_assist and u.alive][:INITIAL_DEPLOY_COUNT]
             player_on_field.sort(key=lambda x: x.position)
-            enemy_on_field = [u for u in enemy_units if not u.is_assist and u.alive][:3]
+            enemy_on_field = [u for u in enemy_units if not u.is_assist and u.alive][:INITIAL_DEPLOY_COUNT]
             enemy_on_field.sort(key=lambda x: x.position)
 
-            # 敌方行动开始时 A卡触发（Player turn前，敌方单位触发）
-            for eu in enemy_units:
+            # ===== P3: 敌方行动开始时触发（Player turn前，敌方单位触发）=====
+            for eu in enemy_on_field:
                 if eu.alive and not eu.is_assist:
-                    sp_gain, a_logs = self.trigger_assist_effects(eu, enemy_units, player_on_field, '敌方行动开始时')
+                    sp_gain, a_logs = self.trigger_assist_effects(eu, enemy_on_field, player_on_field, '敌方行动开始时')
                     enemy_sp = self.add_sp(enemy_sp, sp_gain)
-                    round_log.extend(a_logs)
+                    battle_log.extend(a_logs)
 
-            round_log.append(f'\n[SP] player:{player_sp} enemy:{enemy_sp}')
-            round_log.append('[Player turn]')
+            _log(f'\n[SP] player:{player_sp} enemy:{enemy_sp}', {"type": "sp_info", "player_sp": player_sp, "enemy_sp": enemy_sp})
+            _log('[Player turn]', {"type": "turn_switch", "side": "player"})
             player_sp, enemy_def_sp = half_turn(player_on_field, enemy_on_field, player_units, player_sp, 'P', round_log)
             enemy_sp = self.add_sp(enemy_sp, enemy_def_sp)
 
@@ -2198,20 +2777,20 @@ class BattleSystem:
             player_alive = [u for u in player_units if not u.is_assist and u.alive]
             enemy_alive = [u for u in enemy_units if not u.is_assist and u.alive]
             if not player_alive:
-                round_log.append('Player all dead'); battle_log.extend(round_log)
-                return self._create_result('enemy', round_num, battle_log, player_units, enemy_units)
+                _log('Player all dead', {"type": "battle_end", "winner": "enemy", "reason": "player_dead"})
+                return self._create_result('enemy', round_num, battle_log, parsable_battle_log, player_units, enemy_units)
             if not enemy_alive:
-                round_log.append('Enemy all dead'); battle_log.extend(round_log)
-                return self._create_result('player', round_num, battle_log, player_units, enemy_units)
+                _log('Enemy all dead', {"type": "battle_end", "winner": "player", "reason": "enemy_dead"})
+                return self._create_result('player', round_num, battle_log, parsable_battle_log, player_units, enemy_units)
 
-            # 敌方行动开始时 A卡触发（Enemy turn前，玩家单位触发）
-            for pu in player_units:
+            # ===== P3: 敌方行动开始时触发（Enemy turn前，玩家单位触发）=====
+            for pu in player_on_field:
                 if pu.alive and not pu.is_assist:
-                    sp_gain, a_logs = self.trigger_assist_effects(pu, player_units, enemy_on_field, '敌方行动开始时')
+                    sp_gain, a_logs = self.trigger_assist_effects(pu, player_on_field, enemy_on_field, '敌方行动开始时')
                     player_sp = self.add_sp(player_sp, sp_gain)
-                    round_log.extend(a_logs)
+                    battle_log.extend(a_logs)
 
-            round_log.append('[Enemy turn]')
+            _log('[Enemy turn]', {"type": "turn_switch", "side": "enemy"})
             enemy_sp, player_def_sp = half_turn(enemy_on_field, player_on_field, enemy_units, enemy_sp, 'E', round_log)
             player_sp = self.add_sp(player_sp, player_def_sp)  # 防守方(玩家)获得被攻击SP
 
@@ -2226,15 +2805,16 @@ class BattleSystem:
             battle_log.extend(round_log)
         # 超时判定：挑战方判负
         winner = "enemy" if challenger == "player" else "player"
+        _log(f'超时判定：{winner}胜利', {"type": "battle_end", "winner": winner, "reason": "timeout"})
         
-        return self._create_result(winner, MAX_BATTLE_ROUNDS, battle_log, player_units, enemy_units)
+        return self._create_result(winner, MAX_BATTLE_ROUNDS, battle_log, parsable_battle_log, player_units, enemy_units)
 
-    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 90) -> dict:
+    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 300) -> dict:
         """BOSS战：玩家队伍 vs 单个1500万血量BOSS（12回合限制）
 
         :param player_team: 玩家队伍数据 {"battle_cards": [...], "assist_cards": [...]}
         :param boss_card_id: BOSS角色卡牌ID
-        :param initial_sp: 玩家初始SP（默认90）
+        :param initial_sp: 玩家初始SP（默认300，即开局满SP）
         :return: BOSS战结果字典
         """
         log_battle("=" * 50)
@@ -2298,29 +2878,29 @@ class BattleSystem:
             "enemy_units": result.get("enemy_units", [])
         }
 
-    def _create_result(self, winner: str, rounds: int, log: List[str],
+    def _create_result(self, winner: str, rounds: int, log: List[str], parsable_log: List[dict],
                       player_units: List[BattleUnit], enemy_units: List[BattleUnit]) -> dict:
         """创建战斗结果"""
+        def _unit_dict(u):
+            return {
+                "name": u.character.name,
+                "card_id": u.character.card_id,
+                "hp": u.current_hp,
+                "max_hp": u.max_hp,
+                "alive": u.alive,
+                "is_assist": u.is_assist,
+                "position": u.position,
+                "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
+                "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs],
+            }
+        
         return {
             "winner": winner,
             "rounds": rounds,
             "log": log,
-            "player_units": [{
-                "name": u.character.name,
-                "hp": u.current_hp,
-                "max_hp": u.max_hp,
-                "alive": u.alive,
-                "is_assist": u.is_assist,
-                "position": u.position
-            } for u in player_units],
-            "enemy_units": [{
-                "name": u.character.name,
-                "hp": u.current_hp,
-                "max_hp": u.max_hp,
-                "alive": u.alive,
-                "is_assist": u.is_assist,
-                "position": u.position
-            } for u in enemy_units]
+            "parsable_log": parsable_log,
+            "player_units": [_unit_dict(u) for u in player_units],
+            "enemy_units": [_unit_dict(u) for u in enemy_units],
         }
 
 
@@ -2462,3 +3042,517 @@ def get_battle_help() -> str:
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
+
+
+# ========== 战斗GIF渲染 ==========
+from io import BytesIO
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
+STATE_ICON_DIR = BASE_DIR / "state_icon"
+ICONIMAGE_DIR = BASE_DIR / "iconimage"
+GIF_OUTPUT_DIR = BASE_DIR / "output"
+
+# buff/debuff名 → state_icon 文件名映射
+BUFF_ICON_MAP = {
+    "攻击": "ATK", "防御": "DEF", "暴伤": "CRITICAL_DAMAGE_RATE",
+    "暴击防御": "CRITICAL_RESIST_RATE", "暴击率": "CRITICAL_DAMAGE_RATE",
+    "回避率": "DEX", "必杀威力": "SPECIAL_DAMAGE", "技能威力": "SKILL_DAMAGE",
+    "SP获得量": "SP", "减伤": "DAMAGE_ZERO",
+    "颜色耐性": "STATE_RESIST", "必杀耐性": "SKILL_RESIST",
+    "颜色威力": "SPECIAL_ENHANCED", "盾": "DAMAGE_COVER",
+    "贯通": "PIERCING", "不屈": "GUTS", "强耐": "STATE_RESIST",
+    "弱耐": "STATE_RESIST", "必暴": "SPECIAL_ENHANCED",
+    "感电": "SHOCK", "气绝": "FAINT", "制御不能": "UNCONTROL",
+    "持续被害": "BLEED", "a卡封印": "SEAL", "技能封印": "SILENCE",
+    "必杀封印": "SILENCE", "强化妨害": "VOID_BUFF_CONDITION_BAD",
+    "攻击提升妨害": "VOID_BUFF_CONDITION_BAD", "HP回复妨害": "VOID_HP_HEAL",
+    "弱体化解除妨害": "VOID_BUFF_CONDITION_GOOD", "移动不能": "WORLD_MOVE",
+    "攻击方向+": "ATTACK_DIR_3WAY", "攻击方向-": "ATTACK_DIR_DOWN",
+    "天罚": "DIVINE_RETRIBUTION_SPELL", "反射": "MIRROR_ATTACK",
+    "矢量操作": "VECTOR_CONVERSION", "强制咏唱待机": "SPELL_INTERCEPT",
+}
+DEBUFF_ICON_SUFFIX = "_DOWN"
+BUFF_ICON_SUFFIX = "_UP"
+
+
+def _get_state_icon(buff_name: str, is_debuff: bool = False) -> str:
+    """根据buff名获取state_icon路径，找不到返回None"""
+    base = BUFF_ICON_MAP.get(buff_name)
+    if not base:
+        return None
+    suffix = DEBUFF_ICON_SUFFIX if is_debuff else BUFF_ICON_SUFFIX
+    path = STATE_ICON_DIR / f"state_icon_{base}{suffix}.png"
+    if path.exists():
+        return str(path)
+    # fallback: try without suffix (for status effects like SHOCK, SEAL)
+    path = STATE_ICON_DIR / f"state_icon_{base}.png"
+    return str(path) if path.exists() else None
+
+
+def _get_character_icon(card_id: str, name: str = "", characters: list = None) -> str:
+    """获取角色立绘路径（兼容旧数据无card_id时用角色名查characters列表）"""
+    if not card_id and name and characters:
+        # 从 【卡名】角色名[箭头] 提取角色名
+        clean = re.sub(r'^【[^】]*】', '', name)
+        clean = re.sub(r'\[[↙←↓→↘↖↑↗]\]$', '', clean).strip()
+        for c in characters:
+            cname = c.get('name', '')
+            if '|' in cname:
+                cname = cname.split('|')[0].strip()
+            if clean and clean in cname:
+                card_id = str(c.get('card_id', ''))
+                break
+    if card_id:
+        for p in [f"card_cutin_{card_id}.png", f"card_icon_{card_id}.png"]:
+            path = ICONIMAGE_DIR / p
+            if path.exists(): return str(path)
+        matches = list(ICONIMAGE_DIR.glob(f"*{card_id}*"))
+        if matches: return str(matches[0])
+    return None
+
+
+def _get_font(size: int = 10):
+    for fn in ["C:\\Windows\\Fonts\\simhei.ttf", "C:\\Windows\\Fonts\\msyh.ttc",
+               "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", "arial.ttf"]:
+        if os.path.exists(fn):
+            try: return ImageFont.truetype(fn, size)
+            except: pass
+    return ImageFont.load_default()
+
+
+# 卡牌框架缓存
+_CACHED_INNER_FRAME = None
+_CACHED_OUTER_FRAME = None
+
+def _get_card_frames():
+    """加载卡牌框架（缓存）"""
+    global _CACHED_INNER_FRAME, _CACHED_OUTER_FRAME
+    if _CACHED_INNER_FRAME is None:
+        inner_path = BASE_DIR / "level" / "gacha_tmb_02_01.png"
+        outer_path = BASE_DIR / "level" / "gacha_tmb_frame.png"
+        if inner_path.exists():
+            _CACHED_INNER_FRAME = Image.open(str(inner_path)).convert('RGBA')
+        if outer_path.exists():
+            _CACHED_OUTER_FRAME = Image.open(str(outer_path)).convert('RGBA')
+    return _CACHED_INNER_FRAME, _CACHED_OUTER_FRAME
+
+
+def _render_empty_card(card_w: int, card_h: int) -> Image.Image:
+    """渲染空位卡（1星背景+框，无立绘）"""
+    _, outer_frame = _get_card_frames()
+    card = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
+    # 1星背景
+    bg_path = BASE_DIR / "level" / "gacha_tmb_00_00.png"
+    if bg_path.exists():
+        try:
+            bg = Image.open(str(bg_path)).convert('RGBA').resize((card_w, card_h), Image.Resampling.LANCZOS)
+            card.paste(bg, (0, 0))
+        except: pass
+    # 外框
+    if outer_frame:
+        scaled = outer_frame.resize((card_w, card_h), Image.Resampling.LANCZOS)
+        card.paste(scaled, (0, 0), scaled)
+    # 半透明暗色覆盖
+    ov = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 100))
+    card.paste(ov, (0, 0), ov)
+    return card
+
+
+def _render_card(icon_path: str, card_w: int, card_h: int, alive: bool = True, death_tag: str = "") -> Image.Image:
+    """渲染带框角色卡，死亡时叠加阵亡标签"""
+    inner_frame, outer_frame = _get_card_frames()
+    card = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
+    inner_margin = 4
+    inner_w = card_w - inner_margin * 2
+    inner_h = card_h - inner_margin * 2
+
+    # 角色立绘
+    if icon_path:
+        try:
+            char_img = Image.open(icon_path).convert('RGBA')
+            cw, ch = char_img.size
+            sz = min(cw, ch)
+            left = (cw - sz) // 2; top = (ch - sz) // 2
+            char_cropped = char_img.crop((left, top, left + sz, top + sz))
+            char_resized = char_cropped.resize((inner_w, inner_h), Image.Resampling.LANCZOS)
+            card.paste(char_resized, (inner_margin, inner_margin), char_resized)
+        except: pass
+
+    # 星级框
+    if inner_frame:
+        scaled_inner = inner_frame.resize((card_w, card_h), Image.Resampling.LANCZOS)
+        card.paste(scaled_inner, (0, 0), scaled_inner)
+
+    # 外框
+    if outer_frame:
+        scaled_outer = outer_frame.resize((card_w, card_h), Image.Resampling.LANCZOS)
+        card.paste(scaled_outer, (0, 0), scaled_outer)
+
+    # 阵亡标签（保留立绘可见，仅底部标注+红色调）
+    if not alive:
+        # 红色半透明叠加
+        ov = Image.new('RGBA', (card_w, card_h), (200, 30, 30, 80))
+        card.paste(ov, (0, 0), ov)
+        draw = ImageDraw.Draw(card)
+        font_death = _get_font(10)
+        dtext = f"阵亡 {death_tag}" if death_tag else "阵亡"
+        try: tw = draw.textlength(dtext, font=font_death)
+        except: tw = len(dtext) * 8
+        dx = (card_w - tw) // 2
+        dy = card_h - 16
+        draw.rectangle([dx - 3, dy - 1, dx + tw + 3, dy + 13], fill=(0, 0, 0, 200))
+        draw.text((dx, dy), dtext, fill=(255, 60, 60), font=font_death)
+
+    return card
+
+
+def _render_battle_frame(units: list, hp_deltas: dict, card_w: int = 90, card_h: int = 120, characters: list = None) -> Image.Image:
+    """渲染单侧队伍（带框立绘+血条含HP文字+状态图标+血量变化紧贴血条下方）"""
+    n = len(units)
+    icon_size = 20  # 增大图标尺寸
+    gap = 12  # 增大间距
+    total_w = n * card_w + (n - 1) * gap
+    hp_h = 16  # 增大血条高度
+    delta_h = 32  # 增大变化量区域高度
+    # 图标区：每个角色独立一行图标
+    icon_rows = 2
+    icon_area_h = icon_size * icon_rows + 6
+    total_h = icon_area_h + card_h + hp_h + 4 + delta_h + 8
+
+    frame = Image.new('RGBA', (total_w, total_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(frame)
+    font_hp = _get_font(12)  # 增大字体
+    font_hp_text = _get_font(11)  # 增大字体
+    font_delta = _get_font(14)  # HP变化量专用字体（更大）
+
+    for i, u in enumerate(units):
+        x = i * (card_w + gap)
+
+        # 状态图标 — 每个角色独立排列，最多2行
+        icons = []
+        for b in u.get("buffs", [])[:6]:
+            p = _get_state_icon(b.get("name", ""), False)
+            if p: icons.append((p, False))  # (路径, 是否debuff)
+        for d in u.get("debuffs", [])[:6]:
+            p = _get_state_icon(d.get("name", ""), True)
+            if p: icons.append((p, True))
+        
+        # 每个角色的图标在自己的区域内排列
+        max_icons_per_row = 5
+        for j, (ip, is_debuff) in enumerate(icons[:10]):
+            try:
+                si = Image.open(ip).convert('RGBA').resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+                # 计算图标位置：在角色卡上方，按行列排列
+                icon_x = x + (j % max_icons_per_row) * (icon_size + 2)
+                icon_y = (j // max_icons_per_row) * (icon_size + 2) + 2
+                frame.paste(si, (icon_x, icon_y), si)
+            except: pass
+
+        # 带框角色卡（空位用1星底图，死亡时标注击杀来源）
+        card_y = icon_area_h
+        is_empty = u.get("is_empty", False)
+        if is_empty:
+            # 空位：1星背景 + 外框，无立绘
+            card = _render_empty_card(card_w, card_h)
+        else:
+            icon_path = _get_character_icon(str(u.get("card_id", "")), str(u.get("name", "")), characters)
+            alive_raw = u.get("alive", True)
+            alive = alive_raw if isinstance(alive_raw, bool) else str(alive_raw).lower() != 'false'
+            death_tag = ""
+            if not alive and hp_deltas.get(i):
+                for amount, tag in hp_deltas[i]:
+                    if amount < 0: death_tag = tag; break
+            card = _render_card(icon_path, card_w, card_h, alive, death_tag)
+        frame.paste(card, (x, card_y), card)
+
+        # 空位不渲染HP条和变化量
+        if is_empty:
+            continue
+
+        # HP条（加高，内含白色HP文字，兼容字符串格式）
+        hy = card_y + card_h + 3
+        mx = max(int(u.get("max_hp", 1) or 1), 1)
+        cur = max(0, int(u.get("hp", 0) or 0))
+        pct = cur / mx
+        # 血条背景（深灰色）
+        draw.rectangle([x, hy, x + card_w, hy + hp_h], fill=(30, 30, 30))
+        # 血条填充
+        c = (50, 200, 50) if pct > 0.5 else (200, 180, 50) if pct > 0.25 else (200, 50, 50)
+        if pct > 0:
+            draw.rectangle([x + 1, hy + 1, x + int((card_w - 2) * pct), hy + hp_h - 1], fill=c)
+        # HP文字（居中显示）
+        hp_text = f"{cur}/{mx}"
+        try: tw = draw.textlength(hp_text, font=font_hp_text)
+        except: tw = len(hp_text) * 8
+        tx = x + (card_w - tw) // 2
+        draw.text((tx, hy + 2), hp_text, fill=(255, 255, 255), font=font_hp_text)
+
+        # HP变化量 — 更显眼的显示（大字体、带背景）
+        dy = hy + hp_h + 3
+        for amount, tag in hp_deltas.get(i, [])[:2]:
+            # 根据伤害/回复量选择颜色和显示方式
+            if amount < 0:
+                # 伤害：红色背景、白色文字
+                color = (255, 80, 80)
+                bg_color = (40, 0, 0)
+                txt = f"-{abs(amount)}"
+            else:
+                # 回复：绿色背景、白色文字
+                color = (80, 255, 80)
+                bg_color = (0, 40, 0)
+                txt = f"+{amount}"
+            
+            # 添加攻击类型标签
+            if tag:
+                txt = f"{tag} {txt}"
+            
+            # 计算文字宽度
+            try: tw = draw.textlength(txt, font=font_delta)
+            except: tw = len(txt) * 10
+            
+            # 绘制背景框
+            draw.rectangle([x, dy, x + tw + 6, dy + 18], fill=bg_color)
+            # 绘制文字
+            draw.text((x + 3, dy + 1), txt, fill=color, font=font_delta)
+            dy += 20
+
+    return frame
+
+
+def _parse_battle_state(segments, p_units, e_units):
+    """回放战斗日志，计算每段的单位状态（HP变化+状态图标+存活）
+    返回: [(p_field, e_field, p_deltas, e_deltas, round_label, turn_label), ...]
+    """
+    import re as _re, copy
+    def _init_field(units):
+        result = []
+        for u in units:
+            if u.get("is_assist") or u.get("is_assist") == 'True':
+                continue
+            # 兼容旧数据：hp/alive可能是字符串或数字
+            raw_hp = u.get("max_hp", u.get("hp", 10000))
+            max_hp = int(raw_hp) if raw_hp is not None else 10000
+            pos_raw = u.get("position", 0)
+            position = int(pos_raw) if pos_raw is not None else 0
+            cid = u.get("card_id", "")
+            result.append({
+                "name": u.get("name", "?"), "card_id": cid,
+                "max_hp": max_hp, "hp": max_hp,
+                "alive": True, "buffs": [], "debuffs": [],
+                "position": position,
+            })
+        return result
+
+    p_field = _init_field(p_units)
+    e_field = _init_field(e_units)
+    p_names = {u["name"]: i for i, u in enumerate(p_field)}
+    e_names = {u["name"]: i for i, u in enumerate(e_field)}
+
+    frames_data = []
+
+    for seg_idx, (rlabel, tlabel, phase, seg_lines) in enumerate(segments):
+        p_deltas_cur, e_deltas_cur = {}, {}
+
+        for line in seg_lines:
+            line = str(line)
+
+            # === 换位 ===
+            m = _re.match(r'\s*\[换位\]\s*\[([PE])\]\s*(.+?)\s*->\s*(.)', line)
+            if m:
+                tag, name, arrow = m.group(1), m.group(2).strip(), m.group(3)
+                field = p_field if tag == 'P' else e_field
+                arrow_map = {'↙':0,'←':1,'↓':2,'→':3,'↘':4,'↖':0,'↑':2,'↗':4}
+                new_col = arrow_map.get(arrow, None)
+                if new_col is not None:
+                    for u in field:
+                        if u["name"] == name:
+                            u["position"] = new_col
+                            break
+                continue
+
+            # === 替补上场（继承阵亡单位位置）===
+            m = _re.match(r'\s*\[上场\]\s*\[([PE])\]\s*(.+?)\[(.+?)\]', line)
+            if m:
+                tag, name, arrow = m.group(1), m.group(2).strip(), m.group(3).strip()
+                field = p_field if tag == 'P' else e_field
+                names = p_names if tag == 'P' else e_names
+                # 从箭头确定位置
+                arrow_map = {'↙':0,'←':1,'↓':2,'→':3,'↘':4,'↖':0,'↑':2,'↗':4}
+                new_pos = arrow_map.get(arrow, 0)
+                # 找第一个阵亡槽位（按位置顺序），替补继承该位置
+                dead_sorted = sorted([u for u in field if not u["alive"]], key=lambda u: field.index(u))
+                if dead_sorted:
+                    dead = dead_sorted[0]
+                    old_name = dead["name"]
+                    dead["name"] = f"{name}[{arrow}]"; dead["alive"] = True; dead["hp"] = dead["max_hp"]
+                    dead["buffs"] = []; dead["debuffs"] = []
+                    dead["position"] = new_pos  # 使用箭头确定的位置
+                    if old_name in names: del names[old_name]
+                    names[f"{name}[{arrow}]"] = field.index(dead)
+                continue
+
+            # === 伤害（提取方向+攻击类型）===
+            m = _re.match(r'\([\d.]+\).+?\[(.[→←]?)\]\s*->\s*(.+?)\s*\((\d+)伤害.*\[(.+?)\]', line)
+            if m:
+                src_arrow, df_name, dmg, atk_type = m.group(1), m.group(2).strip(), int(m.group(3)), m.group(4)
+                # 攻击类型缩写: 普通攻击→普, 技能→技, 必杀→终
+                atk_short = "终" if "必杀" in atk_type else "技" if "技能" in atk_type else "普"
+                tag = f"[{src_arrow}]【{atk_short}】"
+                for field, names in [(p_field, p_names), (e_field, e_names)]:
+                    if df_name in names:
+                        idx = names[df_name]
+                        field[idx]["hp"] = max(0, field[idx]["hp"] - dmg)
+                        if field[idx]["hp"] <= 0:
+                            field[idx]["hp"] = 0; field[idx]["alive"] = False
+                            field[idx]["buffs"] = []; field[idx]["debuffs"] = []
+                        (p_deltas_cur if field is p_field else e_deltas_cur).setdefault(idx, []).append((-dmg, tag))
+                        break
+                continue
+
+            # === HP回复（提取来源A卡方向）===
+            m = _re.match(r'(.+?)\s+HP回复\+(\d+)', line)
+            if m:
+                un, heal = m.group(1).strip(), int(m.group(2))
+                # 从名字中的箭头判断来源
+                tag = ""
+                for arr in ['↙','←','↓','→','↘','↖','↑','↗']:
+                    if arr in un: tag = f"[{arr}A]"; break
+                if not tag: tag = "[A]" if "[A]" in line else "[自]"
+                for field, names, deltas in [(p_field, p_names, p_deltas_cur), (e_field, e_names, e_deltas_cur)]:
+                    if un in names:
+                        idx = names[un]
+                        field[idx]["hp"] = min(field[idx]["max_hp"], field[idx]["hp"] + heal)
+                        deltas.setdefault(idx, []).append((heal, tag))
+                        break
+
+            # === 不屈触发（HP回复到30%）===
+            m = _re.match(r'.+?\((\d+)伤害，不屈！HP=(\d+)\)', line)
+            if m:
+                for field, names in [(p_field, p_names), (e_field, e_names)]:
+                    # Find which unit just got hit - it's the one with HP=0 before this
+                    for u in field:
+                        if u["hp"] <= 0:
+                            u["hp"] = int(m.group(2)); u["alive"] = True
+                            break
+
+            # === Buff/Debuff 应用（逗号分隔多效果行）===
+            if '[A]' in line and 'HP回复' not in line and '伤害' not in line and '击破' not in line and '不屈' not in line:
+                stripped = line.rsplit('[A]', 1)[0].strip()
+                parts = [p.strip() for p in stripped.split(',')]
+                # 找第一个完整目标名
+                first_target = None
+                for field, names in [(p_field, p_names), (e_field, e_names)]:
+                    for nm in names:
+                        if nm in parts[0]:
+                            first_target = (field, names, names[nm]); break
+                    if first_target: break
+                if not first_target: continue
+                tf, tn, ti = first_target
+                ALL_BUFF_NAMES = ["必杀威力提升","技能威力提升","物攻提升","异攻提升",
+                    "物防提升","异防提升","暴伤提升","暴击率提升","回避率提升",
+                    "暴击防御提升","SP获得量提升","减伤","盾","贯通","不屈",
+                    "必暴","强耐","弱耐","物攻下降","异攻下降","物防下降",
+                    "异防下降","暴击率下降","回避率下降","颜色耐性下降",
+                    "SP获得量下降","感电","气绝","移动不能","制御不能",
+                    "a卡封印","技能封印","必杀封印","强化妨害","持续被害",
+                    "HP回复妨害","弱体化解除妨害"]
+                for part in parts:
+                    for bname in ALL_BUFF_NAMES:
+                        if bname in part:
+                            mag = "中"
+                            for mt in ["特大","大","中","小"]:
+                                if mt in part: mag = mt; break
+                            is_debuff = any(kw in bname for kw in ["下降","封印","妨害","感电","气绝","移动不能","制御不能","持续被害"])
+                            key = "debuffs" if is_debuff else "buffs"
+                            existing = [e["name"] for e in tf[ti][key]]
+                            if bname not in existing:
+                                tf[ti][key].append({"name": bname, "magnitude": mag})
+                            break
+
+            # === 持续被害 (DoT) ===
+            m = _re.match(r'\s*\[持续被害\]\s*(.+?)\s*-(\d+)HP', line)
+            if m:
+                un, dot = m.group(1).strip(), int(m.group(2))
+                for field, names in [(p_field, p_names), (e_field, e_names)]:
+                    if un in names:
+                        idx = names[un]
+                        field[idx]["hp"] = max(0, field[idx]["hp"] - dot)
+                        if field[idx]["hp"] <= 0:
+                            field[idx]["hp"] = 0; field[idx]["alive"] = False
+                            field[idx]["buffs"] = []; field[idx]["debuffs"] = []
+                        break
+
+        # Snapshot current state for this frame
+        p_snap = copy.deepcopy(p_field)
+        e_snap = copy.deepcopy(e_field)
+        frames_data.append((p_snap, e_snap, p_deltas_cur, e_deltas_cur, rlabel, tlabel, phase))
+
+    return frames_data
+
+
+def battle_to_gif(result: dict, player_team: dict = None, enemy_team: dict = None,
+                  characters: list = None, output_path: str = None,
+                  frame_duration: int = 1000, card_w: int = 90, card_h: int = 120) -> str:
+    """将战斗结果渲染为GIF动画（使用新渲染器）"""
+    if not HAS_PIL:
+        return None
+    
+    # 使用新的GIF渲染器
+    try:
+        from gif_renderer import battle_to_gif_new
+        return battle_to_gif_new(result, characters, output_path, frame_duration)
+    except ImportError as e:
+        log_error(f"Failed to import gif_renderer: {e}")
+        return None
+
+# 保留旧的辅助函数供其他地方使用
+def _render_card(icon_path: str, card_w: int, card_h: int, alive: bool = True, death_tag: str = "") -> Image.Image:
+    """渲染带框角色卡，死亡时叠加阵亡标签"""
+    inner_frame, outer_frame = _get_card_frames()
+    card = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
+    inner_margin = 4
+    inner_w = card_w - inner_margin * 2
+    inner_h = card_h - inner_margin * 2
+
+    # 角色立绘
+    if icon_path:
+        try:
+            char_img = Image.open(icon_path).convert('RGBA')
+            cw, ch = char_img.size
+            sz = min(cw, ch)
+            left = (cw - sz) // 2; top = (ch - sz) // 2
+            char_cropped = char_img.crop((left, top, left + sz, top + sz))
+            char_resized = char_cropped.resize((inner_w, inner_h), Image.Resampling.LANCZOS)
+            card.paste(char_resized, (inner_margin, inner_margin), char_resized)
+        except: pass
+
+    # 星级框
+    if inner_frame:
+        scaled_inner = inner_frame.resize((card_w, card_h), Image.Resampling.LANCZOS)
+        card.paste(scaled_inner, (0, 0), scaled_inner)
+
+    # 外框
+    if outer_frame:
+        scaled_outer = outer_frame.resize((card_w, card_h), Image.Resampling.LANCZOS)
+        card.paste(scaled_outer, (0, 0), scaled_outer)
+
+    # 阵亡标签（保留立绘可见，仅底部标注+红色调）
+    if not alive:
+        # 红色半透明叠加
+        ov = Image.new('RGBA', (card_w, card_h), (200, 30, 30, 80))
+        card.paste(ov, (0, 0), ov)
+        draw = ImageDraw.Draw(card)
+        font_death = _get_font(10)
+        dtext = f"阵亡 {death_tag}" if death_tag else "阵亡"
+        try: tw = draw.textlength(dtext, font=font_death)
+        except: tw = len(dtext) * 8
+        dx = (card_w - tw) // 2
+        dy = card_h - 16
+        draw.rectangle([dx - 3, dy - 1, dx + tw + 3, dy + 13], fill=(0, 0, 0, 200))
+        draw.text((dx, dy), dtext, fill=(255, 60, 60), font=font_death)
+
+    return card

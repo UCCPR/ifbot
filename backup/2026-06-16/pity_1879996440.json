@@ -1,0 +1,47 @@
+{
+  "total_draws": 10,
+  "pity_count": 10,
+  "fes_pity_count": 10,
+  "total_3stars": 0,
+  "red_crystal": 6,
+  "blue_crystal": 4,
+  "recent_3stars": [],
+  "card_collection": {
+    "101022001": {
+      "name": "\u3010\u5fc3\u7406\u638c\u63e1\u3011\u98df\u8702 \u64cd\u7948",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 18:35:56",
+      "last_time": 1781087756.454169
+    },
+    "202222001": {
+      "name": "\u3010\u6700\u7d42\u4fe1\u53f7\u3011\u6253\u3061\u6b62\u3081",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 18:35:56",
+      "last_time": 1781087756.486994
+    },
+    "100422001": {
+      "name": "\u3010\u96fb\u6483\u4f7f\u3044\u3011\u5fa1\u5742 \u7f8e\u7434",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 18:35:56",
+      "last_time": 1781087756.5338
+    },
+    "200723001": {
+      "name": "\u3010\u8b66\u5099\u54e1\u3011\u9ec4\u6cc9\u5ddd \u611b\u7a42",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 18:35:56",
+      "last_time": 1781087756.608821
+    }
+  },
+  "fes_count": 0,
+  "period_count": 0,
+  "other_3star_count": 0,
+  "total_2stars": 4
+}

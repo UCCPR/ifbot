@@ -195,7 +195,7 @@ def list_presets_info(user_id: str, characters: list) -> str:
             first_name = "?"
             bc = p.get("battle_cards", [])
             if bc and bc[0] and characters:
-                chara = next((c for c in characters if str(c.get("card_id")) == str(bc[0])), None)
+                chara = next((c for c in characters.values() if str(c.get("card_id")) == str(bc[0])), None)
                 if chara:
                     first_name = chara.get("name", "?")
             lines.append(f"  槽{i+1}: ⚔{b_count}+🛡{a_count} [{first_name}...]")
@@ -220,7 +220,7 @@ def load_pity_data(user_id: str) -> dict:
     return {}
 
 
-def get_user_3star_cards(user_id: str, characters: list = None) -> list:
+def get_user_3star_cards(user_id: str, characters: dict = None) -> list:
     """获取用户拥有的所有三星卡（包含卡类型信息）"""
     pity_data = load_pity_data(user_id)
     card_collection = pity_data.get("card_collection", {})
@@ -231,7 +231,7 @@ def get_user_3star_cards(user_id: str, characters: list = None) -> list:
             # 获取卡类型
             card_type = "battle"
             if characters:
-                chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+                chara = characters.get(str(card_id))
                 if chara:
                     card_type = chara.get("type", "battle")
             
@@ -253,7 +253,25 @@ def find_attribute_icon(attribute: str) -> str:
     
     attr_name = str(attribute).strip()
     
+    # 中日文属性名称映射
+    attr_mapping = {
+        "红": "赤",
+        "绿": "緑",
+        "蓝": "青",
+        "黄": "黄",
+        "紫": "紫",
+        "超红": "超赤",
+        "超绿": "超緑",
+        "超蓝": "超青",
+        "超黄": "超黄",
+        "超紫": "超紫"
+    }
+    
+    # 尝试查找映射后的名称
+    mapped_attr = attr_mapping.get(attr_name, attr_name)
+    
     patterns = [
+        f"common_tmb_label_element_{mapped_attr}.png",
         f"common_tmb_label_element_{attr_name}.png",
         f"attr_{attr_name}.png",
         f"attribute_{attr_name}.png",
@@ -323,7 +341,7 @@ def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
         char_img = Image.new('RGBA', (100, 100), (100, 100, 100, 255))
     
     # 加载属性图标（根据角色属性）
-    attribute = character.get("attribute")
+    attribute = character.get("element") or character.get("attribute")
     attr_icon_path = find_attribute_icon(attribute) if attribute else None
     attr_img = None
     if attr_icon_path and os.path.exists(attr_icon_path):
@@ -439,7 +457,7 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     card_imgs = []
     for card in current_page_cards:
         card_id = card.get("card_id")
-        chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+        chara = characters.get(str(card_id)) if isinstance(characters, dict) else None
         if chara:
             img_bytes = composite_team_card(chara, is_battle=True)
             if img_bytes:
@@ -555,7 +573,7 @@ def build_team_image(team_data: dict, characters: list) -> str:
     
     for card_id in battle_cards:
         if card_id:
-            chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+            chara = characters.get(str(card_id))  # 直接通过card_id获取
             if chara:
                 img_bytes = composite_team_card(chara, is_battle=True)
                 battle_imgs.append(Image.open(BytesIO(img_bytes)))
@@ -566,7 +584,7 @@ def build_team_image(team_data: dict, characters: list) -> str:
     
     for card_id in assist_cards:
         if card_id:
-            chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+            chara = characters.get(str(card_id))
             if chara:
                 img_bytes = composite_team_card(chara, is_battle=False)
                 assist_imgs.append(Image.open(BytesIO(img_bytes)))
@@ -672,13 +690,13 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
         b_imgs, a_imgs = [], []
         for cid in battle_ids:
             if cid:
-                chara = next((c for c in characters if str(c.get("card_id")) == str(cid)), None)
+                chara = characters.get(str(cid)) if isinstance(characters, dict) else None
                 b_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=True))) if chara else create_empty_slot_image())
             else:
                 b_imgs.append(create_empty_slot_image())
         for cid in assist_ids:
             if cid:
-                chara = next((c for c in characters if str(c.get("card_id")) == str(cid)), None)
+                chara = characters.get(str(cid)) if isinstance(characters, dict) else None
                 a_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=False))) if chara else create_empty_slot_image())
             else:
                 a_imgs.append(create_empty_slot_image())
@@ -775,7 +793,9 @@ def create_empty_slot_image() -> Image.Image:
         font = ImageFont.load_default()
     
     text = "空"
-    text_w, text_h = draw.textsize(text, font=font)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
     text_x = (bg_img.width - text_w) // 2
     text_y = (bg_img.height - text_h) // 2
     draw.text((text_x, text_y), text, fill=(150, 150, 150), font=font)
@@ -869,7 +889,7 @@ def get_team_info(user_id: str, characters: list) -> str:
     info = "⚔️ 战斗卡（第1行）：\n"
     for i, card_id in enumerate(battle_cards, 1):
         if card_id:
-            chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+            chara = next((c for c in characters.values() if str(c.get("card_id")) == str(card_id)), None)
             if chara:
                 limit_badge = ""
                 if chara.get("limit_type") == "フェス限定":
@@ -885,7 +905,7 @@ def get_team_info(user_id: str, characters: list) -> str:
     info += "\n🛡️ 支援卡（第2行）：\n"
     for i, card_id in enumerate(assist_cards, 1):
         if card_id:
-            chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+            chara = next((c for c in characters.values() if str(c.get("card_id")) == str(card_id)), None)
             if chara:
                 limit_badge = ""
                 if chara.get("limit_type") == "フェス限定":
@@ -915,7 +935,8 @@ def auto_build_team(user_id: str, characters: list) -> dict:
     all_user_cards = []
     for card_id, info in card_collection.items():
         stars = info.get("stars", 1)
-        chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+        # characters是字典，key是card_id，value是角色信息
+        chara = characters.get(str(card_id))  # 直接通过card_id获取
         card_type = chara.get("type", "battle") if chara else "battle"
         all_user_cards.append({
             "card_id": card_id,
@@ -938,7 +959,7 @@ def auto_build_team(user_id: str, characters: list) -> dict:
 
     for card in all_user_cards:
         card_id = card.get("card_id")
-        chara = next((c for c in characters if str(c.get("card_id")) == str(card_id)), None)
+        chara = characters.get(str(card_id))
         if not chara:
             continue
 
@@ -1132,7 +1153,7 @@ def auto_build_team(user_id: str, characters: list) -> dict:
     auto_save_preset(user_id)
 
     # ===== 6. 统计配队结果 =====
-    char_dict = {str(c.get("card_id")): c for c in characters}
+    char_dict = {str(c.get("card_id")): c for c in characters.values()}
 
     perfect_pairs = 0
     star3_count = 0
@@ -1221,3 +1242,69 @@ def auto_build_team(user_id: str, characters: list) -> dict:
     message += f"\n💡 前3位=上场位 | 优先同色同攻 | 塞满6位"
 
     return {"success": True, "message": message, "team": team_data}
+
+
+# ========== 防守队系统 ==========
+DEFAULT_DEFENSE_SLOT = 1  # 默认防守队槽位为1
+
+
+def get_defense_slot(user_id: str) -> int:
+    """获取用户的防守队槽位（默认为1）"""
+    presets_data = load_presets(user_id)
+    return presets_data.get("defense_slot", DEFAULT_DEFENSE_SLOT)
+
+
+def set_defense_slot(user_id: str, slot: int) -> bool:
+    """设置用户的防守队槽位（1-6）"""
+    if slot < 1 or slot > MAX_PRESETS:
+        return False
+    presets_data = load_presets(user_id)
+    presets_data["defense_slot"] = slot
+    save_presets(user_id, presets_data)
+    return True
+
+
+def get_defense_team(user_id: str) -> dict:
+    """获取防守队：优先使用防守槽位预设，若为空则使用当前队伍
+
+    当玩家被挑战/战斗时，使用此队伍迎战
+    """
+    defense_slot = get_defense_slot(user_id)
+    presets_data = load_presets(user_id)
+    preset = presets_data["presets"][defense_slot - 1]
+    if preset is not None:
+        bc = preset.get("battle_cards", [None] * BATTLE_CARD_COUNT)
+        ac = preset.get("assist_cards", [None] * ASSIST_CARD_COUNT)
+        # 确保至少有1张战斗卡，否则不算有效防守队
+        if any(bc):
+            return {
+                "battle_cards": list(bc),
+                "assist_cards": list(ac)
+            }
+    # 预设为空或无战斗卡，回退到当前队伍
+    return load_team_data(user_id)
+
+
+def get_defense_team_info(user_id: str, characters: list) -> str:
+    """获取防守队信息文本"""
+    defense_slot = get_defense_slot(user_id)
+    team = get_defense_team(user_id)
+    battle_cards = team.get("battle_cards", [])
+    assist_cards = team.get("assist_cards", [])
+
+    lines = [f"🛡️ 防守队 (预设槽{defense_slot})："]
+    for i in range(min(6, len(battle_cards))):
+        b_id = battle_cards[i] if i < len(battle_cards) else None
+        a_id = assist_cards[i] if i < len(assist_cards) else None
+        b_name = "空"
+        a_name = "空"
+        if b_id and characters:
+            chara = next((c for c in characters.values() if str(c.get("card_id")) == str(b_id)), None)
+            if chara:
+                b_name = chara.get("name", "?")
+        if a_id and characters:
+            chara = next((c for c in characters.values() if str(c.get("card_id")) == str(a_id)), None)
+            if chara:
+                a_name = chara.get("name", "?")
+        lines.append(f"  {i+1}. ⚔{b_name} + 🛡{a_name}")
+    return "\n".join(lines)

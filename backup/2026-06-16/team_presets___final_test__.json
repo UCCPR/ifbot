@@ -1,0 +1,28 @@
+{
+  "presets": [
+    {
+      "battle_cards": [
+        "c1",
+        "c2",
+        "c3",
+        null,
+        null,
+        null
+      ],
+      "assist_cards": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "cycle": 0
+}

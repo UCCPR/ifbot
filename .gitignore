@@ -1,4 +1,6 @@
 __pycache__/
 output/
 info/
+kook/
 config.py
+config.json

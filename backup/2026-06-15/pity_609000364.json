@@ -1,0 +1,87 @@
+{
+  "total_draws": 30,
+  "pity_count": 0,
+  "fes_pity_count": 0,
+  "total_3stars": 1,
+  "red_crystal": 20,
+  "blue_crystal": 9,
+  "recent_3stars": [
+    {
+      "card_id": "703730001",
+      "chara_id": "703730001",
+      "name": "\u3010\u8d85\u96fb\u78c1\u7832\u3011\u4f50\u5929 \u6d99\u5b50",
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "time": "2026-06-10 16:34:19"
+    }
+  ],
+  "card_collection": {
+    "200821001": {
+      "name": "\u3010\u5b66\u751f\u3011\u5439\u5bc4 \u5236\u7406",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "first_time": "2026-06-10 16:33:51",
+      "last_time": 1781080459.123307
+    },
+    "101725001": {
+      "name": "\u3010\u5ea7\u6a19\u79fb\u52d5\u3011\u7d50\u6a19 \u6de1\u5e0c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:33:51",
+      "last_time": 1781080431.849319
+    },
+    "100521001": {
+      "name": "\u3010\u7a7a\u9593\u79fb\u52d5\u3011\u767d\u4e95 \u9ed2\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:33:51",
+      "last_time": 1781080431.867058
+    },
+    "201522001": {
+      "name": "\u3010\u865a\u6570\u5b66\u533a\u306e\u9375\u3011\u98a8\u65ac \u6c37\u83ef",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:34:07",
+      "last_time": 1781080447.07668
+    },
+    "203220001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30eb\u30c1\u30a2",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:34:07",
+      "last_time": 1781080447.107546
+    },
+    "203621001": {
+      "name": "\u3010\u98a8\u7d00\u59d4\u54e1\u3011\u521d\u6625 \u98fe\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:34:19",
+      "last_time": 1781080459.140653
+    },
+    "202623001": {
+      "name": "\u3010\u6700\u5927\u4e3b\u6559\u3011\u30ed\u30fc\u30e9\uff1d\u30b9\u30c1\u30e5\u30a2\u30fc\u30c8",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 16:34:19",
+      "last_time": 1781080459.15328
+    },
+    "703730001": {
+      "name": "\u3010\u8d85\u96fb\u78c1\u7832\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 16:34:19",
+      "last_time": 1781080459.161156
+    }
+  },
+  "fes_count": 1,
+  "period_count": 0,
+  "other_3star_count": 0,
+  "total_2stars": 7
+}

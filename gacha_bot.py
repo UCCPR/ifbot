@@ -35,7 +35,11 @@ try:
         load_preset,
         load_presets,
         save_presets,
-        list_presets_info
+        list_presets_info,
+        get_defense_slot,
+        set_defense_slot,
+        get_defense_team,
+        get_defense_team_info
     )
     TEAM_SYSTEM_LOADED = True
 except ImportError as e:
@@ -57,6 +61,10 @@ except ImportError as e:
     def clear_team_card(user_id, position, card_type="battle"): return False
     def clear_all_team(user_id): pass
     def get_team_info(user_id, characters): return "配队系统未加载"
+    def get_defense_slot(user_id): return 1
+    def set_defense_slot(user_id, slot): return False
+    def get_defense_team(user_id): return {"battle_cards": [], "assist_cards": []}
+    def get_defense_team_info(user_id, characters): return "配队系统未加载"
 
 # 导入战斗系统
 try:
@@ -68,7 +76,7 @@ except ImportError as e:
     class BattleSystem:
         def __init__(self, data): pass
         def start_battle(self, p_team, e_team, challenger="player", initial_player_sp=0): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
-        def start_boss_battle(self, player_team, boss_card_id, initial_sp=90): return {"boss_name": "???", "boss_starting_hp": 15000000, "boss_ending_hp": 15000000, "damage_dealt": 0, "damage_percent": 0, "rounds": 0, "player_survived": 0, "player_total": 0, "boss_killed": False, "log": [], "player_units": [], "enemy_units": []}
+        def start_boss_battle(self, player_team, boss_card_id, initial_sp=300): return {"boss_name": "???", "boss_starting_hp": 15000000, "boss_ending_hp": 15000000, "damage_dealt": 0, "damage_percent": 0, "rounds": 0, "player_survived": 0, "player_total": 0, "boss_killed": False, "log": [], "player_units": [], "enemy_units": []}
         def get_character(self, card_id): return None
         def _get_fallback_character(self, card_id): return None
     def format_battle_result(result): return "战斗系统未加载"
@@ -84,10 +92,12 @@ XLSX_FILE = BASE_DIR / "卡牌信息.xlsx"         # 抽卡卡池（含1/2/3星�
 BATTLE_XLSX = BASE_DIR / "cards_completed.xlsx"  # 战斗数值（3星详细数据）
 INFO_DIR = BASE_DIR / "info"
 OUTPUT_DIR = BASE_DIR / "output"
+BACKUP_DIR = BASE_DIR / "backup"
 
 # 确保目录存在
 INFO_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+BACKUP_DIR.mkdir(exist_ok=True)
 
 # ========== 日志模块（必须在其他模块之前定义）==========
 def log_info(message: str):
@@ -96,7 +106,7 @@ def log_info(message: str):
     log_file = INFO_DIR / "gacha_info.log"
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
-    print(f"[INFO] {message}")
+    print(f"[INFO] {message}", flush=True)
 
 
 def log_error(message: str):
@@ -105,7 +115,103 @@ def log_error(message: str):
     log_file = INFO_DIR / "gacha_error.log"
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] ERR {message}\n")
-    print(f"[ERROR] {message}")
+    print(f"[ERROR] {message}", flush=True)
+
+
+# ========== 抽卡记录备份模块 ==========
+BACKUP_RECORD_FILE = INFO_DIR / "last_backup.json"
+
+def get_last_backup_date() -> str:
+    """获取最后一次备份的日期"""
+    if BACKUP_RECORD_FILE.exists():
+        try:
+            with open(BACKUP_RECORD_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("last_backup_date", "")
+        except:
+            return ""
+    return ""
+
+def set_last_backup_date(date_str: str):
+    """设置最后一次备份的日期"""
+    with open(BACKUP_RECORD_FILE, "w", encoding="utf-8") as f:
+        json.dump({"last_backup_date": date_str}, f)
+
+def backup_pity_records():
+    """备份所有抽卡记录（每天第一次启动时执行）"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    last_backup = get_last_backup_date()
+    
+    if last_backup == today:
+        log_info(f"今日({today})已备份过抽卡记录，跳过")
+        return False
+    
+    try:
+        # 创建今日备份目录
+        today_backup_dir = BACKUP_DIR / today
+        today_backup_dir.mkdir(exist_ok=True)
+        
+        # 备份 pity_*.json 文件（抽卡记录）
+        pity_files = list(INFO_DIR.glob("pity_*.json"))
+        for pity_file in pity_files:
+            dest_file = today_backup_dir / pity_file.name
+            with open(pity_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 备份 fes_stats.json（FES统计）
+        fes_stats = INFO_DIR / "fes_stats.json"
+        if fes_stats.exists():
+            dest_file = today_backup_dir / fes_stats.name
+            with open(fes_stats, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 备份 gacha_*.json 文件（呱太数据）
+        gacha_files = list(INFO_DIR.glob("gacha_*.json"))
+        for gacha_file in gacha_files:
+            dest_file = today_backup_dir / gacha_file.name
+            with open(gacha_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 备份 signin_*.json 文件（签到数据）
+        signin_files = list(INFO_DIR.glob("signin_*.json"))
+        for signin_file in signin_files:
+            dest_file = today_backup_dir / signin_file.name
+            with open(signin_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 备份 ranking.json（排行榜）
+        ranking_file = INFO_DIR / "ranking.json"
+        if ranking_file.exists():
+            dest_file = today_backup_dir / ranking_file.name
+            with open(ranking_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 备份 team_*.json 文件（队伍配置）
+        team_files = list(INFO_DIR.glob("team_*.json"))
+        for team_file in team_files:
+            dest_file = today_backup_dir / team_file.name
+            with open(team_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+        
+        # 更新备份记录
+        set_last_backup_date(today)
+        
+        total_files = len(pity_files) + len(gacha_files) + len(signin_files) + len(team_files)
+        if fes_stats.exists(): total_files += 1
+        if ranking_file.exists(): total_files += 1
+        
+        log_info(f"抽卡记录备份完成！日期: {today}, 文件数: {total_files}")
+        return True
+        
+    except Exception as e:
+        log_error(f"抽卡记录备份失败: {e}")
+        return False
 
 
 # 从配置文件导入配置信息
@@ -624,6 +730,40 @@ def get_leaderboard() -> list:
     return leaderboard[:10]
 
 
+def get_gacha_leaderboard() -> list:
+    """获取抽卡榜单（三星个数前10名）"""
+    leaderboard = []
+
+    for pity_file in INFO_DIR.glob("pity_*.json"):
+        try:
+            user_id = pity_file.stem.replace("pity_", "")
+            pity_data = load_pity_data(user_id)
+
+            total_draws = pity_data.get("total_draws", 0)
+            total_3stars = pity_data.get("total_3stars", 0)
+
+            # 计算三星率
+            rate = round(total_3stars / total_draws * 100, 2) if total_draws > 0 else 0.0
+
+            leaderboard.append({
+                "user_id": user_id,
+                "total_draws": total_draws,
+                "total_3stars": total_3stars,
+                "rate": rate,
+                "fes_count": pity_data.get("fes_count", 0),
+                "period_count": pity_data.get("period_count", 0),
+                "other_3star_count": pity_data.get("other_3star_count", 0),
+                "total_2stars": pity_data.get("total_2stars", 0)
+            })
+        except Exception as e:
+            log_error(f"读取用户数据失败 {pity_file}: {e}")
+
+    # 按三星个数降序排序，相同则按总抽卡数升序
+    leaderboard.sort(key=lambda x: (-x["total_3stars"], x["total_draws"]))
+
+    return leaderboard[:10]
+
+
 # ========== 呱太系统 ==========
 def get_gacha_file(user_id: str) -> Path:
     """获取用户呱太记录文件路径"""
@@ -1059,8 +1199,8 @@ def create_box_summary_image(boxes: list, opened_indices: list, characters: list
     else:
         cols = 5
         rows = (count + 4) // 5
-    
-    gap = 10
+
+    gap = 18
     cards_total_width = card_width * cols + gap * (cols - 1)
     cards_total_height = card_height * rows + gap * (rows - 1)
     
@@ -1883,12 +2023,12 @@ def find_type_icon(card_type: str) -> str:
     # 类型图标文件名模式（在level文件夹中）
     type_name = str(card_type).strip().lower()
     
-    # 尝试多种文件名模式
+    # 使用 gacha_tmb_label_battle / gacha_tmb_label_assist
+    label_name = "battle" if type_name == "battle" else "assist"
     patterns = [
-        f"battle_{type_name}.png",      # battle_battle.png, battle_assist.png
+        f"gacha_tmb_label_{label_name}.png",
+        f"battle_{type_name}.png",      # 兼容旧文件名
         f"{type_name}_icon.png",
-        f"{type_name}.png",
-        f"{type_name}.png"
     ]
     
     for pattern in patterns:
@@ -1902,20 +2042,14 @@ def find_type_icon(card_type: str) -> str:
 
 def composite_card(character: dict) -> bytes:
     """
-    合成卡牌图片：背景 + 属性图标 + Battle/Assist图标 + 角色图标 + 框
+    合成卡牌图片：外框 + 内卡（背景+角色+星级框） + 属性图标 + BA图标
     返回PNG格式的字节数据
-    
-    角色图裁剪区域：
-    - 宽度：25% ~ 75%（中间50%）
-    - 高度：15% ~ 65%（中间50%）
-    裁剪后压缩到框内显示
-    
+
     图层顺序（从后到前）：
-    1. 背景图
-    2. 属性图标（框的左下角）
-    3. 角色图
-    4. Battle/Assist图标（角色图最下方）
-    5. 框（最顶层）
+    1. 内卡（背景 → 角色图 → 星级框）→ 居中放入外框
+    2. 属性图标（内卡左下角）
+    3. BA图标（外框正下方）
+    4. 外框 gacha_tmb_frame.png（最顶层）
     """
     stars = character["stars"]
     icon_path = character.get("icon_path") or find_character_icon(
@@ -1924,10 +2058,9 @@ def composite_card(character: dict) -> bytes:
 
     if not icon_path or not os.path.exists(icon_path):
         log_error(f"找不到角色图标: icon_path={icon_path}, chara_id={character['chara_id']}, stars={stars}")
-        # 返回一个空白图片作为占位
-        img = Image.new('RGBA', (200, 300), (100, 100, 100, 255))
+        img = Image.new('RGBA', (150, 150), (100, 100, 100, 255))
         bio = BytesIO()
-        img.save(bio, format='JPEG', optimize=True, quality=60)
+        img.save(bio, format='PNG')
         return bio.getvalue()
 
     try:
@@ -1940,16 +2073,16 @@ def composite_card(character: dict) -> bytes:
             return None
 
         bg_img = Image.open(bg_path).convert('RGBA')
-        frame_img = Image.open(frame_path).convert('RGBA')
+        inner_frame_img = Image.open(frame_path).convert('RGBA')
         char_img = Image.open(icon_path).convert('RGBA')
-        
+
         # 加载属性图标（根据角色属性）
         attribute = character.get("attribute")
         attr_icon_path = find_attribute_icon(attribute) if attribute else None
         attr_img = None
         if attr_icon_path and os.path.exists(attr_icon_path):
             attr_img = Image.open(attr_icon_path).convert('RGBA')
-        
+
         # 加载Battle/Assist图标（根据角色类型）
         card_type = character.get("type", "battle")
         type_icon_path = find_type_icon(card_type)
@@ -1957,33 +2090,27 @@ def composite_card(character: dict) -> bytes:
         if type_icon_path and os.path.exists(type_icon_path):
             type_img = Image.open(type_icon_path).convert('RGBA')
 
-        # 获取各层尺寸
-        bg_width, bg_height = bg_img.size
-        frame_width, frame_height = frame_img.size
-        
+        # 尺寸常量
+        CARD_SIZE = 122  # 卡牌尺寸
+
         # ========== 裁剪角色图的指定区域 ==========
-        # 裁剪区域：宽度25%~75%，高度15%~65%（使用预定义常量）
         char_width, char_height = char_img.size
         crop_left = int(char_width * CROP_LEFT_RATIO)
         crop_right = int(char_width * CROP_RIGHT_RATIO)
         crop_top = int(char_height * CROP_TOP_RATIO)
         crop_bottom = int(char_height * CROP_BOTTOM_RATIO)
-        
-        # 执行裁剪
+
         char_img_cropped = char_img.crop((crop_left, crop_top, crop_right, crop_bottom))
-        
-        # ========== 缩放裁剪后的图片以适应框 ==========
+
+        # ========== 缩放裁剪后的图片以适应卡面 ==========
         cropped_width, cropped_height = char_img_cropped.size
         cropped_ratio = cropped_width / cropped_height
-        frame_ratio = frame_width / frame_height
 
-        if cropped_ratio > frame_ratio:
-            # 裁剪后的图片更宽，以框宽度为基准缩放
-            char_target_width = int(frame_width * 0.85)
+        if cropped_ratio > 1:
+            char_target_width = int(CARD_SIZE * 0.85)
             char_target_height = int(char_target_width / cropped_ratio)
         else:
-            # 裁剪后的图片更高，以框高度为基准缩放
-            char_target_height = int(frame_height * 0.85)
+            char_target_height = int(CARD_SIZE * 0.85)
             char_target_width = int(char_target_height * cropped_ratio)
 
         char_img_resized = char_img_cropped.resize(
@@ -1991,51 +2118,30 @@ def composite_card(character: dict) -> bytes:
             Image.Resampling.LANCZOS
         )
 
-        # 创建输出画布（使用背景尺寸）
-        output = Image.new('RGBA', (bg_width, bg_height), (0, 0, 0, 0))
-
-        # 逐层合成（从后到前）：
-        # 1. 背景
-        # 2. 角色图
-        # 3. 框
-        # 4. 属性图标（框的左下角，在框之上）
-        # 5. Battle/Assist图标（卡牌最底部，在框之上）
-        
-        # 角色图居中放置
-        char_x = (bg_width - char_target_width) // 2
-        char_y = (bg_height - char_target_height) // 2
+        # ========== 合成卡牌（122x122，居中）==========
+        output = Image.new('RGBA', (CARD_SIZE, CARD_SIZE), (0, 0, 0, 0))
+        char_x = (CARD_SIZE - char_target_width) // 2
+        char_y = (CARD_SIZE - char_target_height) // 2
 
         output.paste(bg_img, (0, 0))
         output.paste(char_img_resized, (char_x, char_y), char_img_resized)
-        
-        # 先粘贴框
-        output.paste(frame_img, (0, 0), frame_img)
-        
-        # 添加属性图标（框的左下角，在框之上）
+        output.paste(inner_frame_img, (0, 0), inner_frame_img)
+
+        # 属性图标放在左下角
         if attr_img:
-            # 属性图标保持原始大小，不压缩
-            attr_width, attr_height = attr_img.size
-            # 放在框的左下角（留一点边距）
-            attr_x = 5
-            attr_y = bg_height - attr_height - 5
-            output.paste(attr_img, (attr_x, attr_y), attr_img)
-        
-        # 添加Battle/Assist图标（卡牌最底部，在框之上）
+            attr_w, attr_h = attr_img.size
+            output.paste(attr_img, (5, CARD_SIZE - attr_h - 5), attr_img)
+
+        # BA图标放在底部居中
         if type_img:
-            # 不压缩，保持原始大小
-            type_width, type_height = type_img.size
-            # 放在卡牌最底部居中，距离底部0像素
-            type_x = (bg_width - type_width) // 2
-            type_y = bg_height - type_height  # 距离底部0像素
+            type_w, type_h = type_img.size
+            type_x = (CARD_SIZE - type_w) // 2
+            type_y = CARD_SIZE - type_h
             output.paste(type_img, (type_x, type_y), type_img)
 
-        # 转换为RGB（去除alpha通道）用于发送
-        output_rgb = Image.new('RGB', (bg_width, bg_height), (255, 255, 255))
-        output_rgb.paste(output, (0, 0), output)
-
-        # 保存到BytesIO（使用压缩优化，减小文件大小）
+        # 保持RGBA模式保存为PNG
         bio = BytesIO()
-        output_rgb.save(bio, format='JPEG', optimize=True, quality=60)
+        output.save(bio, format='PNG')
         return bio.getvalue()
 
     except Exception as e:
@@ -2071,58 +2177,63 @@ def save_card_image(card_data: list, output_idx: int) -> str:
             if not card_images:
                 return None
 
-            # 每张卡的尺寸
+            # 每张卡的尺寸（现在为 150x150）
             card_width, card_height = card_images[0].size
 
             # 创建2行5列的大图
-            gap = 10
+            gap = 18
             total_width = card_width * 5 + gap * 4
             total_height = card_height * 2 + gap
 
             # ========== 尝试加载十连背景图片 ==========
-            # 查找level目录下的十连背景图片
             bg_path = None
             for bg_name in ["gacha_tmb_bg_10.png", "gacha_tmb_10_bg.png", "gacha_bg_10.png"]:
                 test_path = LEVEL_DIR / bg_name
                 if test_path.exists():
                     bg_path = str(test_path)
                     break
-            
+
             if bg_path:
-                # 使用找到的背景图片
+                # 使用十连背景，缩放到卡牌区域+边距
                 log_info(f"使用十连背景图片: {bg_path}")
                 bg_img = Image.open(bg_path).convert('RGB')
-                
-                # 将背景图片压缩到原来的50%
-                bg_w, bg_h = bg_img.size
-                compressed_w = int(bg_w * 0.5 * 0.264)
-                compressed_h = int(bg_h * 0.5 * 0.264)
-                bg_img_compressed = bg_img.resize((compressed_w, compressed_h), Image.Resampling.LANCZOS)
-                
-                # 使用压缩后的背景尺寸作为画布尺寸
-                output = Image.new('RGB', (compressed_w, compressed_h), (50, 50, 50))
-                output.paste(bg_img_compressed, (0, 0))
-                
-                # 计算卡牌区域在背景中的居中位置
-                cards_x = (compressed_w - total_width) // 2
-                cards_y = (compressed_h - total_height) // 2
+                bg_w, bg_h = bg_img.size  # 1920x896
+
+                BG_SCALE = 0.38
+                canvas_w = int(bg_w * BG_SCALE)
+                canvas_h = int(bg_h * BG_SCALE)
+                bg_img_scaled = bg_img.resize((canvas_w, canvas_h), Image.Resampling.LANCZOS)
+
+                # RGBA画布，卡牌区域居中于背景
+                output = Image.new('RGBA', (canvas_w, canvas_h), (50, 50, 50, 255))
+                output.paste(bg_img_scaled, (0, 0))
+
+                cards_x = (canvas_w - total_width) // 2
+                cards_y = (canvas_h - total_height) // 2
             else:
-                # 使用默认背景色
-                output = Image.new('RGB', (total_width, total_height), (50, 50, 50))
+                # 无背景图时使用纯色画布
+                output = Image.new('RGBA', (total_width, total_height), (50, 50, 50, 255))
                 cards_x = 0
                 cards_y = 0
 
-            # 将卡牌粘贴到背景上（居中放置）
+            # 将卡牌粘贴到背景上（居中放置，使用alpha通道保留透明）
             for idx, img in enumerate(card_images):
                 row = idx // 5
                 col = idx % 5
                 x = cards_x + col * (card_width + gap)
                 y = cards_y + row * (card_height + gap)
-                output.paste(img, (x, y))
+                if img.mode == 'RGBA':
+                    output.paste(img, (x, y), img)
+                else:
+                    output.paste(img, (x, y))
 
-            filename = f"gacha_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
+            # 最后一步：转为RGB并压缩为JPEG
+            output_rgb = Image.new('RGB', output.size, (255, 255, 255))
+            output_rgb.paste(output, (0, 0), output)
+
+            filename = f"gacha_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.jpg"
             filepath = OUTPUT_DIR / filename
-            output.save(filepath, format='JPEG', optimize=True, quality=60)
+            output_rgb.save(str(filepath), format='JPEG', optimize=True, quality=60)
             return str(filepath)
 
     except Exception as e:
@@ -2161,9 +2272,10 @@ def handle_message():
         # 判断是否被艾特
         is_at = False
         if group_id:
-            # 群聊：检查是否包含艾特CQ码
-            # CQ码格式: [CQ:at,qq=123456789] 或 @昵称
-            if f'[CQ:at,qq={self_id}]' in raw_message or f'@' in raw_message:
+            # 群聊：检查是否包含艾特Bot的CQ码或@BotQQ号
+            if self_id and f'[CQ:at,qq={self_id}]' in raw_message:
+                is_at = True
+            elif self_id and f'@{self_id}' in raw_message:
                 is_at = True
         
         # 如果是群聊且没有被艾特，忽略消息（管理员除外）
@@ -2208,7 +2320,8 @@ def handle_message():
             else:
                 # 有盲盒会话但输入无效，提示用户
                 session = get_box_session(user_id)
-                remaining = len(session["boxes"]) - len(session["opened"])
+                # 保护：防止opened超过boxes长度导致负数
+                remaining = max(0, len(session["boxes"]) - len(session["opened"]))
                 reply = f"你还有{remaining}个未开！请输入要开的编号（如1、选择1）或「全部开」"
                 if group_id and user_id:
                     reply = f"[CQ:at,qq={user_id}] {reply}"
@@ -2283,6 +2396,25 @@ def handle_message():
                 send_message(reply, user_id, group_id)
                 return jsonify({"status": "success", "message": f"admin: {action}红碎片"})
 
+            # 备份战斗录
+            if '备份战斗录' in raw_message:
+                import shutil
+                backup_dir = BASE_DIR / "backup" / "battle_logs" / datetime.now().strftime("%Y%m%d")
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                
+                info_dir = BASE_DIR / "info"
+                battle_files = list(info_dir.glob("battle_*.json"))
+                
+                for battle_file in battle_files:
+                    dest = backup_dir / battle_file.name
+                    shutil.copy(str(battle_file), str(dest))
+                
+                reply = f"✅ 管理员操作完成: 已备份 {len(battle_files)} 个战斗日志文件到 {backup_dir}"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "success", "message": "admin: 备份战斗录"})
+
         # 处理私聊和群聊消息（群聊已确保被艾特）
         # 支持"十连"/"单抽"/"帮助"/"获取呱太"/"签到"/"个人记录"/"兑换呱太"
         if '十连' in raw_message or 'gacha10' in raw_message.lower():
@@ -2292,13 +2424,15 @@ def handle_message():
         elif '单抽' in raw_message or 'gacha' in raw_message.lower():
             return handle_gacha(1, user_id, group_id, message_id)
         elif '帮助' in raw_message or 'help' in raw_message.lower():
-            return handle_help(user_id, group_id)
+            return handle_help(user_id, group_id, raw_message)
         elif '获取呱太' in raw_message or 'getgacha' in raw_message.lower():
             return handle_get_gacha(user_id, group_id)
         elif '签到' in raw_message or 'signin' in raw_message.lower():
             return handle_signin(user_id, group_id)
         elif '队伍' in raw_message or '配队' in raw_message.lower():
             return handle_team(user_id, group_id, raw_message)
+        elif '防守队' in raw_message:
+            return handle_defense_team(user_id, group_id, raw_message)
         elif '下一页' in raw_message:
             return handle_personal_info(user_id, group_id, page_action='next')
         elif '上一页' in raw_message:
@@ -2307,12 +2441,14 @@ def handle_message():
             return handle_personal_info(user_id, group_id)
         elif '兑换呱太' in raw_message or '兑换' in raw_message.lower():
             return handle_exchange_crystal(user_id, group_id)
+        elif '抽卡榜单' in raw_message or '抽卡排行' in raw_message:
+            return handle_gacha_leaderboard(user_id, group_id)
         elif '排行榜' in raw_message or '排行' in raw_message.lower():
             return show_ranking(user_id, group_id)
         elif '详细信息' in raw_message:
             return handle_show_details(user_id, group_id)
-        elif '战斗日志' in raw_message:
-            return handle_battle_log(user_id, group_id)
+        elif '战斗日志' in raw_message or '战斗GIF' in raw_message or '战斗gif' in raw_message:
+            return handle_battle_log(user_id, group_id, gen_gif=('GIF' in raw_message or 'gif' in raw_message))
         elif '三王女' in raw_message:
             return handle_sannoujo(user_id, group_id)
         elif '三星池子' in raw_message or '红抽' in raw_message or '蓝抽' in raw_message:
@@ -2460,7 +2596,7 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
             box_images[0].convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
         else:
             # 十连：使用背景图片
-            gap = 10
+            gap = 18
             cols = 5
             rows = (count + 4) // 5
             cards_total_width = card_width * cols + gap * (cols - 1)
@@ -2580,7 +2716,7 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
 def handle_limited_gacha(user_id: str, group_id):
     """
     限定池十连：15000呱太，至少必出一个FES限定或期間限定
-    每用户10分钟CD
+    每用户8分钟CD
     """
     try:
         cost = LIMITED_GACHA_COST
@@ -2596,7 +2732,7 @@ def handle_limited_gacha(user_id: str, group_id):
             log_info(f"限定池失败 [{user_id}]: 呱太不足 {current_gacha}/{cost}")
             return jsonify({"status": "error", "message": "呱太不足", "current_gacha": current_gacha, "required_gacha": cost})
 
-        # 冷却检查（10分钟）
+        # 冷却检查（8分钟）
         now_ts = datetime.now().timestamp()
         last_limited = LIMITED_GACHA_COOLDOWN.get(user_id, 0)
         remaining = LIMITED_GACHA_COOLDOWN_SECONDS - (now_ts - last_limited)
@@ -2683,7 +2819,7 @@ def handle_limited_gacha(user_id: str, group_id):
             return jsonify({"status": "error", "message": "生成盲盒图片失败"})
 
         card_width, card_height = box_images[0].size
-        gap = 10
+        gap = 18
         cols = 5
         rows = 2
         cards_total_width = card_width * cols + gap * (cols - 1)
@@ -2815,8 +2951,8 @@ def handle_sannoujo(user_id: str, group_id):
         scale = min(max_card_width / orig_w, max_card_height / orig_h)
         card_width = int(orig_w * scale)
         card_height = int(orig_h * scale)
-        
-        gap = 10
+
+        gap = 18
         cols = 5
         rows = 2
         
@@ -3333,7 +3469,7 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
                         
                         max_card_width = 90
                         max_card_height = 120
-                        gap = 10
+                        gap = 18
                         cols = min(len(card_imgs), 5)
                         rows = (len(card_imgs) + cols - 1) // cols
                         
@@ -3564,6 +3700,57 @@ def handle_leaderboard(user_id: str, group_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def handle_gacha_leaderboard(user_id: str, group_id):
+    """处理抽卡榜单查询请求（按三星个数排行）"""
+    try:
+        leaderboard = get_gacha_leaderboard()
+
+        if not leaderboard:
+            reply = "暂无抽卡数据！"
+            if group_id and user_id:
+                reply = f"[CQ:at,qq={user_id}] {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "success", "leaderboard": []})
+
+        rank_emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+        msg_lines = ["🎰 抽卡榜单 TOP 10 🎰"]
+        msg_lines.append("（按三星个数排行）\n")
+
+        for i, player in enumerate(leaderboard):
+            rank = i + 1
+            emoji = rank_emojis[i] if i < len(rank_emojis) else f"{rank}."
+
+            # 标记查询者
+            is_self = player["user_id"] == user_id
+            self_mark = " 👈(你)" if is_self else ""
+
+            # 格式化三星率
+            rate_str = f"{player['rate']:.1f}%" if player['total_draws'] > 0 else "0.0%"
+
+            msg_lines.append(
+                f"{emoji} {player['user_id']}{self_mark}\n"
+                f"   ⭐三星: {player['total_3stars']} | 🎫总抽: {player['total_draws']} | 📊三星率: {rate_str}"
+            )
+
+        reply = "\n".join(msg_lines)
+
+        if group_id and user_id:
+            reply = f"[CQ:at,qq={user_id}] {reply}"
+        send_message(reply, user_id, group_id)
+
+        log_info(f"查询抽卡榜单 [{user_id}]")
+
+        return jsonify({
+            "status": "success",
+            "leaderboard": leaderboard
+        })
+
+    except Exception as e:
+        log_error(f"查询抽卡榜单失败: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 def handle_exchange_crystal(user_id: str, group_id):
     """处理碎片兑换呱太请求"""
     try:
@@ -3740,27 +3927,15 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
 
 
 def save_rolling_battle_log(user_id: str, result: dict) -> str:
-    """保存战斗日志，滚动保留最近3次（单文件 battle_{uid}.json，数组存储）"""
-    import time
+    """保存战斗日志，只保留最近1次（单文件 battle_{uid}.json，数组存储）"""
     log_path = INFO_DIR / f"battle_{user_id}.json"
-    logs = []
-    if log_path.exists():
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                logs = json.load(f)
-            if not isinstance(logs, list):
-                logs = []
-        except Exception:
-            logs = []
     # 添加时间戳
     result["saved_at"] = datetime.now().strftime("%m-%d %H:%M:%S")
-    logs.append(result)
-    # 只保留最近3次
-    if len(logs) > 3:
-        logs = logs[-3:]
+    # 只保留最近一次战斗
+    logs = [result]
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
-    return f"battle_{user_id} (共{len(logs)}次)"
+    return f"battle_{user_id} (共1次)"
 
 
 def handle_battle(user_id: str, group_id, raw_message: str):
@@ -3786,9 +3961,9 @@ def handle_battle(user_id: str, group_id, raw_message: str):
             send_message(reply, user_id, group_id)
             return jsonify({"status": "success", "message": "显示战斗帮助"})
 
-        # 解析对手@ 和 AI难度
+        # 解析对手@（跳过bot自己的@mention，找战斗命令后的@）
         import re
-        at_match = re.search(r'\[CQ:at,qq=(\d+)\]', raw_message)
+        at_match = re.search(r'(?:战斗|对战|决斗).*?\[CQ:at,qq=(\d+)\]', raw_message)
         enemy_user_id = None
 
         # 解析难度: 战斗5, 战斗 3, 对战2 等
@@ -3825,24 +4000,28 @@ def handle_battle(user_id: str, group_id, raw_message: str):
             return jsonify({"status": "error", "message": "玩家队伍为空"})
 
         if enemy_user_id:
-            enemy_team = load_team_data(enemy_user_id)
+            # 对手使用防守队迎战
+            enemy_team = get_defense_team(enemy_user_id)
             enemy_battle_cards = enemy_team.get("battle_cards", [])
             enemy_has_cards = any(card for card in enemy_battle_cards)
 
             if not enemy_has_cards:
-                reply = "对手的队伍还没有配置战斗卡！"
+                reply = "对手还没有配置防守队！"
                 if group_id and user_id:
                     reply = f"[CQ:at,qq={user_id}] {reply}"
                 send_message(reply, user_id, group_id)
                 return jsonify({"status": "error", "message": "对手队伍为空"})
 
             enemy_name = f"玩家{enemy_user_id[:4]}****"
+            enemy_defense_slot = get_defense_slot(enemy_user_id)
 
             # 发送双方VS配队图
             characters = get_characters()
             vs_img = build_vs_team_image(player_team, enemy_team, characters)
             if vs_img:
                 send_image(vs_img, user_id, group_id)
+            at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+            send_message(at_message + f"⚔️ VS {enemy_name} 🛡️(防守队·预设{enemy_defense_slot})", user_id, group_id)
         else:
             # AI对手（带难度）
             difficulty_names = {1: "简单", 2: "普通", 3: "困难", 4: "极难", 5: "地狱"}
@@ -3987,7 +4166,7 @@ def handle_boss_battle(user_id: str, group_id, raw_message: str):
         log_info(f"BOSS战开始: {user_id} vs BOSS({BOSS_CARD_ID} {boss_name})")
         BOSS_BATTLE_COOLDOWN[user_id] = datetime.now().timestamp()
         result = BATTLE_INSTANCE.start_boss_battle(
-            player_team, str(BOSS_CARD_ID), initial_sp=90
+            player_team, str(BOSS_CARD_ID), initial_sp=300
         )
 
         # 保存战斗日志（复用现有）
@@ -4457,11 +4636,19 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
             send_message(reply, user_id, group_id)
             return jsonify({"status": "error", "message": "未配置队伍"})
         
-        # 获取敌方队伍（人类玩家用当前队伍，AI用存储队伍）
+        # 获取敌方队伍（人类玩家用防守队，AI用存储队伍）
         if target_entry["is_ai"]:
             enemy_team = target_entry["team"]
         else:
-            enemy_team = load_team_data(target_entry["user_id"])
+            # 对手使用防守队迎战
+            enemy_team = get_defense_team(target_entry["user_id"])
+            enemy_battle_cards = enemy_team.get("battle_cards", [])
+            if not any(enemy_battle_cards):
+                reply = "对手还没有配置防守队，暂时无法挑战！"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "对手防守队为空"})
         log_info(f"敌方队伍类型: {type(enemy_team)}")
         if enemy_team:
             log_info(f"敌方队伍 battle_cards: {enemy_team.get('battle_cards')}")
@@ -4542,7 +4729,7 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
         result_text += f"\n📊 我方存活 {player_alive}/6, 敌方存活 {enemy_alive}/6"
         if active_slot > 0:
             result_text += f"\n📋 使用预设: 槽{active_slot}"
-        result_text += "\n💡 输入「战斗日志」查看详细记录"
+        result_text += "\n💡 输入「战斗日志」查看详细记录，输入「战斗GIF」生成动画"
 
         send_message(result_text, user_id, group_id)
         show_ranking(user_id, group_id)
@@ -4559,8 +4746,8 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
         return jsonify({"status": "error", "message": f"挑战失败: {str(e)}"})
 
 
-def handle_battle_log(user_id: str, group_id):
-    """显示最近一场战斗的详细日志"""
+def handle_battle_log(user_id: str, group_id, gen_gif: bool = False):
+    """显示最近一场战斗的详细日志，可选生成GIF"""
     try:
         log_path = INFO_DIR / f"battle_{user_id}.json"
         if not log_path.exists():
@@ -4582,12 +4769,33 @@ def handle_battle_log(user_id: str, group_id):
         # 读取最近一次战斗日志
         result = all_logs[-1]
 
-        # 判断是BOSS战还是普通战斗，使用对应的格式化函数
+        # 生成GIF（如果请求），仅保存本地不发送
+        if gen_gif and BATTLE_SYSTEM_LOADED:
+            try:
+                # 重新读取日志确保获取最新数据
+                with open(log_path, "r", encoding="utf-8") as f:
+                    latest_logs = json.load(f)
+                if isinstance(latest_logs, list) and latest_logs:
+                    result = latest_logs[-1]
+                
+                from gif_renderer import battle_to_gif_new
+                battle_chars = load_battle_characters()
+                gif_path = battle_to_gif_new(result, output_path=None)
+                if gif_path and os.path.exists(gif_path):
+                    reply = f"GIF已保存: {gif_path}"
+                else:
+                    reply = "GIF生成失败"
+                if group_id and user_id:
+                    reply = f"[CQ:at,qq={user_id}] {reply}"
+                send_message(reply, user_id, group_id)
+            except Exception as gif_err:
+                log_error(f"战斗GIF生成失败: {gif_err}")
+
+        # 格式化战斗日志文本
         if "boss_name" in result:
             log_text = format_boss_result(result, include_log=True)
         else:
             log_text = format_battle_result(result)
-        # 压缩空行
         import re
         log_text = re.sub(r'\n{3,}', '\n\n', log_text)
 
@@ -4596,9 +4804,9 @@ def handle_battle_log(user_id: str, group_id):
         if len(log_text) > 4000:
             log_text = log_text[:4000] + "\n... (日志过长已截断)"
         send_message(at_message + log_text, user_id, group_id)
-        
+
         return jsonify({"status": "success", "message": "显示战斗日志"})
-    
+
     except Exception as e:
         log_error(f"获取战斗日志失败: {e}")
         reply = f"获取战斗日志失败: {str(e)}"
@@ -4624,6 +4832,8 @@ def handle_team(user_id: str, group_id, raw_message: str):
         # 队伍 自动配队 - AI自动配队（B+A同色同攻击类型，FES优先）
         # 队伍 切换 N - 加载预设N (1-6)，设为活跃槽位，后续编辑自动保存到此槽
         # 队伍 预设 - 查看所有预设摘要
+        # 防守队 - 查看当前防守队（被挑战时使用）
+        # 防守队 设置 N - 设置防守队为预设槽位N（1-6）
         
         # 获取用户当前查看的页码（从session或默认第1页）
         team_session_file = INFO_DIR / f"team_session_{user_id}.json"
@@ -4651,11 +4861,16 @@ def handle_team(user_id: str, group_id, raw_message: str):
             team_data = load_team_data(user_id)
             img_path = build_team_image(team_data, characters)
             if img_path and os.path.exists(img_path):
-                with open(img_path, "rb") as f:
-                    image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
-                at = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
-                msg = f"{at}🤖 自动配队完成\n[CQ:image,file=base64://{image_base64}]"
-                os.remove(img_path)
+                try:
+                    with open(img_path, "rb") as f:
+                        image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
+                    os.remove(img_path)
+                    at = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+                    msg = f"{at}🤖 自动配队完成\n[CQ:image,file=base64://{image_base64}]"
+                except Exception as e:
+                    log_error(f"配队图片处理失败: {e}")
+                    at = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+                    msg = f"{at}🤖 自动配队完成"
             else:
                 at = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
                 msg = f"{at}🤖 自动配队完成"
@@ -4945,10 +5160,11 @@ def handle_team(user_id: str, group_id, raw_message: str):
             
             # 生成队伍图片
             img_path = build_team_image(team_data, characters)
-            
+
             if img_path and os.path.exists(img_path):
                 with open(img_path, "rb") as f:
                     image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
+                os.remove(img_path)
                 img_message = f"[CQ:image,file=base64://{image_base64}]"
                 
                 # 只发送图片，不发送文字信息
@@ -4978,41 +5194,299 @@ def handle_team(user_id: str, group_id, raw_message: str):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-def handle_help(user_id: str, group_id):
-    """返回帮助信息"""
-    help_text = f"""
+def handle_defense_team(user_id: str, group_id, raw_message: str):
+    """处理防守队命令
+    防守队         - 查看当前防守队（配队图片）
+    防守队 设置 N  - 设置防守队为预设槽位N（1-6）
+    """
+    try:
+        characters = get_characters()
+        import re
+
+        # 设置防守队槽位: 防守队 设置 N 或 防守队 N
+        set_match = re.search(r'设置\s*(\d)', raw_message)
+        if not set_match:
+            set_match = re.search(r'防守队\s+(\d)', raw_message)
+
+        if set_match:
+            slot = int(set_match.group(1))
+            if slot < 1 or slot > 6:
+                reply = f"[CQ:at,qq={user_id}] 防守队槽位必须在1-6之间！" if group_id else "防守队槽位必须在1-6之间！"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "无效的槽位"})
+
+            # 检查预设槽位是否有队伍
+            presets_data = load_presets(user_id)
+            preset = presets_data["presets"][slot - 1]
+            if preset is None or not any(preset.get("battle_cards", [])):
+                reply = f"[CQ:at,qq={user_id}] 预设槽位{slot}为空！请先使用「队伍 切换 {slot}」配置该预设的队伍。" if group_id else f"预设槽位{slot}为空！请先使用「队伍 切换 {slot}」配置该预设的队伍。"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "预设为空"})
+
+            set_defense_slot(user_id, slot)
+            reply = f"[CQ:at,qq={user_id}] 🛡️ 防守队已设置为「预设槽位{slot}」！被挑战时将使用该队伍迎战。" if group_id else f"🛡️ 防守队已设置为「预设槽位{slot}」！被挑战时将使用该队伍迎战。"
+            send_message(reply, user_id, group_id)
+            log_info(f"防守队 [{user_id}]: 设置为预设槽位{slot}")
+            return jsonify({"status": "success", "message": f"防守队设置为槽位{slot}"})
+
+        # 查看当前防守队 — 生成配队图片
+        defense_team = get_defense_team(user_id)
+        defense_slot = get_defense_slot(user_id)
+
+        at_message = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+
+        # 生成防守队配队图片
+        img_path = build_team_image(defense_team, characters)
+        if img_path and os.path.exists(img_path):
+            with open(img_path, "rb") as f:
+                image_base64 = base64.b64encode(compress_image_bytes(f.name)).decode("utf-8")
+            os.remove(img_path)
+            img_message = f"[CQ:image,file=base64://{image_base64}]"
+            send_message(f"{at_message}🛡️ 防守队 (预设槽{defense_slot})\n{img_message}", user_id, group_id)
+            os.remove(img_path)
+        else:
+            # 图片生成失败，回退到文字
+            info = get_defense_team_info(user_id, characters)
+            send_message(f"{at_message}{info}", user_id, group_id)
+
+        return jsonify({"status": "success", "message": "显示防守队"})
+
+    except Exception as e:
+        log_error(f"防守队处理失败: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def handle_help(user_id: str, group_id, raw_message: str = ""):
+    """分章节帮助系统
+    帮助          → 显示帮助总览（章节列表）
+    帮助 抽卡     → 抽卡相关帮助
+    帮助 战斗     → 战斗相关帮助
+    帮助 队伍     → 配队相关帮助
+    帮助 经济     → 货币/经济帮助
+    """
+    import re
+
+    # 解析章节参数
+    chapter = ""
+    for kw in ["抽卡", "gacha", "战斗", "对战", "battle", "队伍", "配队",
+               "team", "经济", "economy", "货币", "其他", "other"]:
+        if kw in raw_message:
+            chapter = kw
+            break
+
+    if chapter in ("抽卡", "gacha"):
+        help_text = _help_gacha()
+    elif chapter in ("战斗", "对战", "battle"):
+        help_text = _help_battle()
+    elif chapter in ("队伍", "配队", "team"):
+        help_text = _help_team()
+    elif chapter in ("经济", "economy", "货币"):
+        help_text = _help_economy()
+    elif chapter in ("其他", "other"):
+        help_text = _help_other()
+    else:
+        help_text = _help_overview()
+
+    at = f"[CQ:at,qq={user_id}] " if group_id and user_id else ""
+    send_message(at + help_text, user_id, group_id)
+    log_info(f"帮助 [{user_id}]: 章节={chapter or '总览'}")
+    return jsonify({"status": "success", "chapter": chapter or "overview"})
+
+
+# ========== 帮助章节 ==========
+
+def _help_overview() -> str:
+    """帮助总览 — 列出所有章节供用户选择"""
+    return f"""
 ╔══════════════════════════════╗
-║     ifBot 帮助      ║
+║     🃏 小千 帮助总览         ║
 ╠══════════════════════════════╣
-║ 单抽  - ({GACHA_COST}呱太) ║
-║ 十连  - ({GACHA10_COST}呱太) ║
-║ 限定十连 - ({LIMITED_GACHA_COST}呱太,必出限定) ║
-║ 获取呱太 - 获得{GET_GACHA_REWARD}呱太   ║
-║ 签到  - 每日签到({DAILY_REWARD}呱太)  ║
-║ 个人记录 - 查看个人统计    ║
-║ 兑换呱太 - 用碎片兑换呱太      ║
-║ 排行榜 - 查看战力排行榜        ║
-║ 三星池子 - 查看三星only池介绍    ║
-║ 队伍  - 查看当前队伍        ║
-║ 帮助  - 显示此帮助         ║
-╠══════════════════════════════╣                   ║
-║ 战斗 @  - 与某个玩家战斗  ║
-║ 战斗  - 与随机AI战斗  ║
-╠══════════════════════════════╣
-║ 配队命令:                      ║
-║ 队伍 我的卡 - 用于配队          ║
-║ 队伍 设置 位置 序号   ║
-║ 队伍 清除 位置             ║
-║ 队伍 清空 - 清空队伍       ║
+║                              ║
+║  📖 请选择章节：              ║
+║                              ║
+║  🎴 帮助 抽卡 — 抽卡相关     ║
+║  ⚔️ 帮助 战斗 — 对战/BOSS/排行║
+║  📋 帮助 队伍 — 配队/防守队  ║
+║  💰 帮助 经济 — 货币/签到    ║
+║  📦 帮助 其他 — 个人记录等   ║
+║                              ║
+║  例：艾特我发送「帮助 抽卡」  ║
+║                              ║
+║  常用命令速查：               ║
+║  单抽 ({GACHA_COST}呱太)   十连 ({GACHA10_COST}呱太) ║
+║  限定十连 ({LIMITED_GACHA_COST}呱太)  签到 (+{DAILY_REWARD}) ║
+║  获取呱太 (+{GET_GACHA_REWARD})  队伍  战斗  ║
 ╚══════════════════════════════╝
 """
-    # 发送帮助消息
-    send_message(help_text.strip(), user_id, group_id)
-    
-    return jsonify({
-        "status": "success",
-        "message": help_text.strip()
-    })
+
+
+def _help_gacha() -> str:
+    """抽卡帮助"""
+    return f"""
+╔══════════════════════════════╗
+║     🎴 抽卡系统              ║
+╠══════════════════════════════╣
+║                              ║
+║  ▸ 单抽                      ║
+║    消耗 {GACHA_COST} 呱太，抽取 1 个盲盒  ║
+║                              ║
+║  ▸ 十连                      ║
+║    消耗 {GACHA10_COST} 呱太，抽取10个盲盒 ║
+║    保底至少 1 张二星          ║
+║    冷却 {GACHA10_COOLDOWN_SECONDS} 秒                ║
+║                              ║
+║  ▸ 限定十连 / 限定池          ║
+║    消耗 {LIMITED_GACHA_COST} 呱太，必出FES/期间限定 ║
+║    冷却 {LIMITED_GACHA_COOLDOWN_SECONDS // 60} 分钟               ║
+║                              ║
+║  ▸ 三星池子 / 红抽 / 蓝抽     ║
+║    消耗碎片必出3星            ║
+║    红抽: 红色碎片×{THREE_STAR_POOL_RED_COST}            ║
+║    蓝抽: 蓝色碎片×{THREE_STAR_POOL_BLUE_COST}            ║
+║                              ║
+║  ▸ 保底机制                   ║
+║    每 {PITY_LIMIT} 抽必出FES限定3星     ║
+║    保底进度可在个人记录中查看   ║
+║                              ║
+║  💡 盲盒需开箱查看结果         ║
+╚══════════════════════════════╝
+"""
+
+
+def _help_battle() -> str:
+    """战斗帮助"""
+    return f"""
+╔══════════════════════════════╗
+║     ⚔️ 战斗系统              ║
+╠══════════════════════════════╣
+║                              ║
+║  ▸ 战斗 / 对战               ║
+║    与AI对战（默认难度2）      ║
+║    战斗5 = 地狱难度           ║
+║                              ║
+║  ▸ 战斗 @玩家                 ║
+║    与指定玩家对战             ║
+║    对手使用防守队迎战         ║
+║                              ║
+║  ▸ BOSS战                    ║
+║    挑战1500万HP的BOSS         ║
+║    限12回合，自动战斗         ║
+║    冷却 {BOSS_BATTLE_COOLDOWN_SECONDS} 秒                 ║
+║                              ║
+║  ▸ 挑战 排名 (1~10)          ║
+║    挑战排行榜上的玩家/AI      ║
+║    只能挑战比你高≤3位的       ║
+║    对手使用防守队迎战         ║
+║                              ║
+║  ▸ 排行榜 / 排行              ║
+║    查看TOP10战力排行榜        ║
+║                              ║
+║  ▸ 战斗日志 / 战斗GIF         ║
+║    查看详细记录 / 生成GIF动画  ║
+║                              ║
+║  💡 战斗力= FES×10 + 期间×8  ║
+║     + 其他3星×7 + 2星×3      ║
+╚══════════════════════════════╝
+"""
+
+
+def _help_team() -> str:
+    """配队帮助"""
+    return f"""
+╔══════════════════════════════╗
+║     📋 配队系统              ║
+╠══════════════════════════════╣
+║                              ║
+║  ▸ 队伍                      ║
+║    查看当前队伍（图片）       ║
+║                              ║
+║  ▸ 队伍 我的卡               ║
+║    查看拥有的3星卡（配队用）  ║
+║    支持翻页：上一页/下一页    ║
+║                              ║
+║  ▸ 队伍 设置 位置 序号       ║
+║    把卡放入队伍指定位置(1~6)  ║
+║    例：队伍 设置 1 3         ║
+║                              ║
+║  ▸ 队伍 清除 位置             ║
+║    清除指定位置的卡(1~6)     ║
+║                              ║
+║  ▸ 队伍 清空                  ║
+║    清空整个队伍               ║
+║                              ║
+║  ▸ 队伍 自动配队              ║
+║    AI自动组建最优队伍          ║
+║                              ║
+║  ▸ 队伍 切换 N (1~6)         ║
+║    切换到预设槽位的队伍       ║
+║                              ║
+║  ▸ 队伍 预设                  ║
+║    查看所有6个预设槽位        ║
+║                              ║
+║  ▸ 防守队                     ║
+║    查看当前防守队             ║
+║    防守队 设置 N — 设为槽位N  ║
+║    (被挑战时使用防守队迎战)   ║
+║                              ║
+║  💡 前3位=上场位，后3位=后补 ║
+╚══════════════════════════════╝
+"""
+
+
+def _help_economy() -> str:
+    """经济帮助"""
+    return f"""
+╔══════════════════════════════╗
+║     💰 经济系统              ║
+╠══════════════════════════════╣
+║                              ║
+║  ▸ 获取呱太                   ║
+║    获得 {GET_GACHA_REWARD} 呱太             ║
+║    冷却 {GET_GACHA_COOLDOWN_SECONDS} 秒                ║
+║                              ║
+║  ▸ 签到                      ║
+║    每日签到获得 {DAILY_REWARD} 呱太       ║
+║                              ║
+║  ▸ 兑换呱太 / 兑换            ║
+║    用碎片兑换呱太             ║
+║    红色碎片 = ? 呱太          ║
+║    蓝色碎片 = ? 呱太          ║
+║                              ║
+║  📊 消费价格表：              ║
+║  ├ 单抽: {GACHA_COST} 呱太           ║
+║  ├ 十连: {GACHA10_COST} 呱太          ║
+║  ├ 限定十连: {LIMITED_GACHA_COST} 呱太       ║
+║  ├ 红抽: 红色碎片×{THREE_STAR_POOL_RED_COST}       ║
+║  └ 蓝抽: 蓝色碎片×{THREE_STAR_POOL_BLUE_COST}        ║
+║                              ║
+║  💡 呱太通过获取/签到/兑换    ║
+║     三种渠道获得              ║
+╚══════════════════════════════╝
+"""
+
+
+def _help_other() -> str:
+    """其他功能帮助"""
+    return """
+╔══════════════════════════════╗
+║     📦 其他功能              ║
+╠══════════════════════════════╣
+║                              ║
+║  ▸ 个人记录 / 记录            ║
+║    查看个人统计:              ║
+║    总抽数、3星数、保底进度    ║
+║    卡牌收藏、战力图、最近3星  ║
+║    支持翻页：下一页/上一页    ║
+║                              ║
+║  ▸ 三王女                    ║
+║    隐藏彩蛋~                 ║
+║                              ║
+║  ▸ 详细信息                  ║
+║    查看指定卡牌的详细数值     ║
+║                              ║
+║  💡 更多功能开发中...         ║
+╚══════════════════════════════╝
+"""
 
 
 def handle_cute_reply(user_id: str, group_id):
@@ -5056,6 +5530,9 @@ if __name__ == '__main__':
     log_info(f"星级图片目录: {LEVEL_DIR}")
     log_info(f"Excel文件: {XLSX_FILE}")
     log_info("=" * 50)
+
+    # 每天第一次启动时备份抽卡记录
+    backup_pity_records()
 
     # 预加载抽卡角色数据
     characters = preload_characters()

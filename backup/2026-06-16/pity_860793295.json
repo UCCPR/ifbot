@@ -1,0 +1,230 @@
+{
+  "total_draws": 100,
+  "pity_count": 8,
+  "fes_pity_count": 61,
+  "total_3stars": 7,
+  "red_crystal": 68,
+  "blue_crystal": 25,
+  "recent_3stars": [
+    {
+      "card_id": "124130001",
+      "chara_id": "124130001",
+      "name": "\u3010\u30b0\u30ea\u30e0\u30c7\u30a3\u30fc\u30f4\u30a1\u3011\u30b5\u30fc\u30c6\u30a3\u30fc\u30f3\u30c7\u30b9",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-10 13:24:45"
+    },
+    {
+      "card_id": "600130004",
+      "chara_id": "600130004",
+      "name": "\u3010\u30b9\u30b3\u30c3\u30c8\u30e9\u30f3\u30c9\u30e4\u30fc\u30c9\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "time": "2026-06-10 13:24:39"
+    },
+    {
+      "card_id": "208430003",
+      "chara_id": "208430003",
+      "name": "\u3010\u4e0d\u610f\u6253\u3061\u30b5\u30f3\u30bf\u3011\u756a\u5916\u500b\u4f53",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-10 13:24:24"
+    },
+    {
+      "card_id": "201330004",
+      "chara_id": "201330004",
+      "name": "\u3010\u7570\u754c\u578b\u5bcc\u8c6a\u30a2\u30fc\u30b5\u30fc\u3011\u4e00\u65b9\u901a\u884c",
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "time": "2026-06-10 12:48:37"
+    },
+    {
+      "card_id": "104330001",
+      "chara_id": "104330001",
+      "name": "\u3010\u771f\u590f\u306e\u9b54\u8853\u5e2b\u3011\u30ec\u30a4\u30f4\u30a3\u30cb\u30a2\uff1d\u30d0\u30fc\u30c9\u30a6\u30a7\u30a4",
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "time": "2026-06-10 12:48:37"
+    },
+    {
+      "card_id": "800230001",
+      "chara_id": "800230001",
+      "name": "\u3010\u6dd1\u3084\u304b\u30c6\u30a3\u30fc\u30bf\u30a4\u30e0\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "time": "2026-06-10 12:48:37"
+    },
+    {
+      "card_id": "780030000",
+      "chara_id": "180030001",
+      "name": "\u3010\u79d1\u5b66\u00d7\u9b54\u8853\u306e\u6642\u3011\u4e0a\u6761 \u5f53\u9ebb&\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "time": "2026-06-10 12:39:07"
+    }
+  ],
+  "card_collection": {
+    "101320001": {
+      "name": "\u3010\u7b2c\u4e00\u5019\u88dc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "last_time": 1781069053.184186
+    },
+    "102522001": {
+      "name": "\u3010\u4e03\u5929\u4e03\u5200\u3011\u795e\u88c2 \u706b\u7e54",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "last_time": 1781069085.795981
+    },
+    "203721001": {
+      "name": "\u3010\u53cb\u9054\u601d\u3044\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "last_time": 1781069064.834616
+    },
+    "202823001": {
+      "name": "\u3010\u8056\u8077\u8005\u3011\u30aa\u30eb\u30bd\u30e9\uff1d\u30a2\u30af\u30a3\u30ca\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 3,
+      "first_time": "2026-06-10 12:38:48",
+      "last_time": 1781069085.837162
+    },
+    "202023001": {
+      "name": "\u3010\u80fd\u529b\u8ffd\u8de1\u3011\u6edd\u58fa \u7406\u540e",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 12:38:48",
+      "last_time": 1781066328.083016
+    },
+    "200622001": {
+      "name": "\u3010\u5e7c\u5973\u5148\u751f\u3011\u6708\u8a60 \u5c0f\u840c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 12:38:48",
+      "last_time": 1781069079.972057
+    },
+    "780030000": {
+      "name": "\u3010\u79d1\u5b66\u00d7\u9b54\u8853\u306e\u6642\u3011\u4e0a\u6761 \u5f53\u9ebb&\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 12:39:07",
+      "last_time": 1781066347.288527
+    },
+    "203220001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30eb\u30c1\u30a2",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 12:39:20",
+      "last_time": 1781069064.844204
+    },
+    "202222001": {
+      "name": "\u3010\u6700\u7d42\u4fe1\u53f7\u3011\u6253\u3061\u6b62\u3081",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 12:39:20",
+      "last_time": 1781066360.052914
+    },
+    "101922001": {
+      "name": "\u3010\u30c8\u30e9\u30c3\u30d7\u30de\u30b9\u30bf\u30fc\u3011\u30d5\u30ec\u30f3\u30c0\uff1d\u30bb\u30a4\u30f4\u30a7\u30eb\u30f3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 12:48:37",
+      "last_time": 1781069053.171917
+    },
+    "100123001": {
+      "name": "\u3010\u30d2\u30fc\u30ed\u30fc\u5fd7\u9858\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 12:48:37",
+      "last_time": 1781066917.454006
+    },
+    "800230001": {
+      "name": "\u3010\u6dd1\u3084\u304b\u30c6\u30a3\u30fc\u30bf\u30a4\u30e0\u3011\u30a4\u30f3\u30c7\u30c3\u30af\u30b9",
+      "stars": 3,
+      "limit_type": "\u30d5\u30a7\u30b9\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 12:48:37",
+      "last_time": 1781066917.46058
+    },
+    "104330001": {
+      "name": "\u3010\u771f\u590f\u306e\u9b54\u8853\u5e2b\u3011\u30ec\u30a4\u30f4\u30a3\u30cb\u30a2\uff1d\u30d0\u30fc\u30c9\u30a6\u30a7\u30a4",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 12:48:37",
+      "last_time": 1781066917.474585
+    },
+    "201330004": {
+      "name": "\u3010\u7570\u754c\u578b\u5bcc\u8c6a\u30a2\u30fc\u30b5\u30fc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 12:48:37",
+      "last_time": 1781066917.483871
+    },
+    "200723001": {
+      "name": "\u3010\u8b66\u5099\u54e1\u3011\u9ec4\u6cc9\u5ddd \u611b\u7a42",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 12:49:06",
+      "last_time": 1781066946.067781
+    },
+    "100323001": {
+      "name": "\u3010\u591a\u89d2\u30b9\u30d1\u30a4\u3011\u571f\u5fa1\u9580 \u5143\u6625",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 12:49:06",
+      "last_time": 1781066946.096359
+    },
+    "101121001": {
+      "name": "\u3010\u539f\u5b50\u5d29\u3057\u3011\u9ea6\u91ce \u6c88\u5229",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 12:49:19",
+      "last_time": 1781066959.707322
+    },
+    "208430003": {
+      "name": "\u3010\u4e0d\u610f\u6253\u3061\u30b5\u30f3\u30bf\u3011\u756a\u5916\u500b\u4f53",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 13:24:24",
+      "last_time": 1781069064.856341
+    },
+    "600130004": {
+      "name": "\u3010\u30b9\u30b3\u30c3\u30c8\u30e9\u30f3\u30c9\u30e4\u30fc\u30c9\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 3,
+      "limit_type": "\u30a4\u30d9\u30f3\u30c8\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 13:24:39",
+      "last_time": 1781069079.943821
+    },
+    "124130001": {
+      "name": "\u3010\u30b0\u30ea\u30e0\u30c7\u30a3\u30fc\u30f4\u30a1\u3011\u30b5\u30fc\u30c6\u30a3\u30fc\u30f3\u30c7\u30b9",
+      "stars": 3,
+      "limit_type": "\u671f\u9593\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 13:24:45",
+      "last_time": 1781069085.801057
+    },
+    "103823001": {
+      "name": "\u3010\u9ec4\u91d1\u932c\u6210\u3011\u30a2\u30a6\u30ec\u30aa\u30eb\u30b9\uff1d\u30a4\u30b6\u30fc\u30c9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 13:24:45",
+      "last_time": 1781069085.819417
+    }
+  },
+  "fes_count": 2,
+  "period_count": 3,
+  "other_3star_count": 2,
+  "total_2stars": 14
+}

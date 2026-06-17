@@ -1,0 +1,118 @@
+{
+  "total_draws": 30,
+  "pity_count": 11,
+  "fes_pity_count": 28,
+  "total_3stars": 2,
+  "red_crystal": 17,
+  "blue_crystal": 11,
+  "recent_3stars": [
+    {
+      "card_id": "203630009",
+      "chara_id": "203630009",
+      "name": "\u3010\u9b54\u6cd5\u79d1\u7b2c\u4e00\u9ad8\u6821\u751f\u3011\u521d\u6625 \u98fe\u5229",
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "time": "2026-06-10 20:12:39"
+    },
+    {
+      "card_id": "101830002",
+      "chara_id": "101830002",
+      "name": "\u3010\u30a2\u30a4\u30c6\u30e0\u3011\u7d79\u65d7 \u6700\u611b",
+      "limit_type": "\u6052\u5e38",
+      "time": "2026-06-10 20:11:59"
+    }
+  ],
+  "card_collection": {
+    "203220001": {
+      "name": "\u3010\u56da\u4eba\u670d\u3011\u30eb\u30c1\u30a2",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 20:11:59",
+      "last_time": 1781093519.610066
+    },
+    "101830002": {
+      "name": "\u3010\u30a2\u30a4\u30c6\u30e0\u3011\u7d79\u65d7 \u6700\u611b",
+      "stars": 3,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:11:59",
+      "last_time": 1781093519.555767
+    },
+    "102421001": {
+      "name": "\u3010\u30eb\u30fc\u30f3\u306e\u4f7f\u3044\u624b\u3011\u30b9\u30c6\u30a4\u30eb\uff1d\u30de\u30b0\u30cc\u30b9",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 2,
+      "first_time": "2026-06-10 20:11:59",
+      "last_time": 1781093609.708966
+    },
+    "100123001": {
+      "name": "\u3010\u30d2\u30fc\u30ed\u30fc\u5fd7\u9858\u3011\u4e0a\u6761 \u5f53\u9ebb",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:12:39",
+      "last_time": 1781093559.48673
+    },
+    "203721001": {
+      "name": "\u3010\u53cb\u9054\u601d\u3044\u3011\u4f50\u5929 \u6d99\u5b50",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:12:39",
+      "last_time": 1781093559.568698
+    },
+    "203630009": {
+      "name": "\u3010\u9b54\u6cd5\u79d1\u7b2c\u4e00\u9ad8\u6821\u751f\u3011\u521d\u6625 \u98fe\u5229",
+      "stars": 3,
+      "limit_type": "\u30b3\u30e9\u30dc\u9650\u5b9a",
+      "count": 1,
+      "first_time": "2026-06-10 20:12:39",
+      "last_time": 1781093559.649594
+    },
+    "101320001": {
+      "name": "\u3010\u7b2c\u4e00\u5019\u88dc\u3011\u4e00\u65b9\u901a\u884c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:12:39",
+      "last_time": 1781093559.676466
+    },
+    "104021001": {
+      "name": "\u3010\u901f\u8a18\u539f\u5178\u3011\u30aa\u30ea\u30a2\u30ca\uff1d\u30c8\u30e0\u30bd\u30f3",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:13:29",
+      "last_time": 1781093609.589106
+    },
+    "202322002": {
+      "name": "\u3010\u4f53\u64cd\u670d\u3011\u59eb\u795e \u79cb\u6c99",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:13:29",
+      "last_time": 1781093609.680189
+    },
+    "200622001": {
+      "name": "\u3010\u5e7c\u5973\u5148\u751f\u3011\u6708\u8a60 \u5c0f\u840c",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:13:29",
+      "last_time": 1781093609.741637
+    },
+    "103422001": {
+      "name": "\u3010\u5fa1\u4f7f\u5815\u3057\u3011\u30df\u30fc\u30b7\u30e3\uff1d\u30af\u30ed\u30a4\u30c4\u30a7\u30d5",
+      "stars": 2,
+      "limit_type": "\u6052\u5e38",
+      "count": 1,
+      "first_time": "2026-06-10 20:13:29",
+      "last_time": 1781093609.771627
+    }
+  },
+  "fes_count": 0,
+  "period_count": 0,
+  "other_3star_count": 2,
+  "total_2stars": 9
+}
