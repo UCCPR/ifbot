@@ -1,0 +1,13 @@
+[Unit]
+Description=QQ Bot Image Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/root/zmdbot
+ExecStart=/usr/bin/python3 -c "import http.server,os;os.chdir('/home/root/zmdbot/static_images');h=http.server.HTTPServer(('0.0.0.0',18080),http.server.SimpleHTTPRequestHandler);h.serve_forever()"
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

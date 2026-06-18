@@ -1,14 +1,29 @@
 # 配置文件示例
 # 复制此文件为 config.py 并填写实际值
 
-# Napcat配置
-NAPCAT_HOST = "127.0.0.1"
-NAPCAT_PORT = 3000  # Napcat HTTP API端口（http.port配置项）
-NAPCAT_TOKEN = ""  # NapCatQQ的access_token（在Napcat的webui.json中查看），留空则不认证
+# ============================================================
+# QQ 开放平台 Bot 配置（qq_bot.py 使用）
+# 在 https://q.qq.com 注册机器人后获取以下信息
+# ============================================================
+QQ_BOT_APP_ID = "你的AppID"     # 机器人 AppID（在开放平台"开发设置"页面查看）
+QQ_BOT_TOKEN = "你的Token"      # 机器人 Token（在"开发设置"页面生成）
+QQ_BOT_SECRET = "你的Secret"    # 机器人 Secret（在"开发设置"页面查看）
 
-# Flask应用配置
+# ----------------------------------------------------------
+# KOOK Bot 配置（kook_bot.py 使用）
+# 在 https://developer.kookapp.cn 注册机器人后获取
+# ----------------------------------------------------------
+KOOK_BOT_TOKEN = "你的KOOK Token"  # KOOK Bot Token
+KOOK_API_URL = "https://www.kookapp.cn/api/v3"  # KOOK API地址
+
+# Napcat 配置（gacha_bot.py 旧版QQ Bot使用，新版请用 qq_bot.py）
+NAPCAT_HOST = "127.0.0.1"
+NAPCAT_PORT = 3000
+NAPCAT_TOKEN = ""
+
+# Flask应用配置（所有Bot共用）
 FLASK_HOST = "0.0.0.0"
-FLASK_PORT = 5000  # Flask服务端口（避免与Napcat冲突）
+FLASK_PORT = 5000  # Flask服务端口，QQ开放平台回调地址需填写 http://你的IP:5000/
 
 # ========== 抽卡概率配置 ==========
 

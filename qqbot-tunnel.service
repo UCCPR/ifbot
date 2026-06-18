@@ -1,0 +1,14 @@
+[Unit]
+Description=QQ Bot Cloudflare Tunnel
+After=qqbot-image.service
+Requires=qqbot-image.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/root/zmdbot
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://localhost:18080 --no-autoupdate
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

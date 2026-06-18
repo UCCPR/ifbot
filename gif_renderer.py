@@ -166,22 +166,74 @@ def _find_character_icon(chara_id):
 
 def _get_state_icon(effect_name):
     # Debuff关键词（负面效果）
-    debuff_keywords = ["下降", "封印", "沉默", "冻结", "昏迷", "流血", "灼烧", "中毒", "减伤"]
+    debuff_keywords = ["下降", "封印", "沉默", "冻结", "昏迷", "流血", "灼烧", "中毒", "减伤",
+                       "妨害", "被害", "感电", "气绝", "不能", "DOWN"]
     is_debuff = any(kw in effect_name for kw in debuff_keywords)
     
     icon_map = {
+        # === 攻击/防御 ===
         "攻击": "state_icon_ATK_UP.png", "物攻提升": "state_icon_ATK_UP.png",
         "物攻下降": "state_icon_ATK_DOWN.png", "异攻提升": "state_icon_INT_UP.png",
         "异攻下降": "state_icon_INT_DOWN.png", "防御": "state_icon_DEF_UP.png",
         "物防提升": "state_icon_DEF_UP.png", "物防下降": "state_icon_DEF_DOWN.png",
         "异防提升": "state_icon_MIND_UP.png", "异防下降": "state_icon_MIND_DOWN.png",
+        # === 暴击 ===
         "暴伤": "state_icon_CRITICAL_DAMAGE_RATE_UP.png", "暴伤提升": "state_icon_CRITICAL_DAMAGE_RATE_UP.png",
-        "暴击率": "state_icon_CRITICAL_RESIST_RATE_UP.png", "必杀威力": "state_icon_SKILL_DAMAGE_UP.png",
-        "必杀威力提升": "state_icon_SKILL_DAMAGE_UP.png", "盾": "state_icon_DAMAGE_COVER.png",
-        "获得盾": "state_icon_DAMAGE_COVER.png", "不屈": "state_icon_GUTS.png",
-        "回避率": "state_icon_SPECIAL_ENHANCED.png", "SP获得量": "state_icon_SP_UP.png",
-        "a卡封印": "state_icon_SILENCE.png", "减伤": "state_icon_DAMAGE_COVER.png",
+        "暴击率": "state_icon_CRITICAL_RESIST_RATE_UP.png", "暴击率提升": "state_icon_CRITICAL_RESIST_RATE_UP.png",
+        "暴击防御": "state_icon_CRITICAL_DAMAGE_RATE_UP.png", "暴击防御提升": "state_icon_CRITICAL_DAMAGE_RATE_UP.png",
+        # === 技能/必杀 ===
+        "必杀威力": "state_icon_SKILL_DAMAGE_UP.png", "必杀威力提升": "state_icon_SKILL_DAMAGE_UP.png",
+        "技能威力": "state_icon_SKILL_DAMAGE_UP.png", "技能威力提升": "state_icon_SKILL_DAMAGE_UP.png",
+        # === SP ===
+        "SP获得量": "state_icon_SP_UP.png", "SP获得量提升": "state_icon_SP_UP.png",
+        # === 特殊防御 ===
+        "盾": "state_icon_DAMAGE_COVER.png", "获得盾": "state_icon_DAMAGE_COVER.png",
+        "不屈": "state_icon_GUTS.png", "减伤": "state_icon_DAMAGE_COVER.png",
+        "回避率": "state_icon_SPECIAL_ENHANCED.png", "回避率提升": "state_icon_SPECIAL_ENHANCED.png",
+        # === 特殊buff ===
+        "必暴": "state_icon_CRITICAL_RESIST_RATE_UP.png",
+        "贯通": "state_icon_PIERCING.png",
+        "强耐": "state_icon_STATE_RESIST.png",
+        "弱耐": "state_icon_STATE_RESIST.png",
+        "嘲讽": "state_icon_TARGET_RED_DAMAGE_UP.png",
+        # === 控制类debuff ===
+        "封印": "state_icon_SEAL.png", "a卡封印": "state_icon_SILENCE.png",
+        "技能封印": "state_icon_SEAL.png", "必杀封印": "state_icon_SEAL.png",
+        "气绝": "state_icon_FAINT.png", "感电": "state_icon_SHOCK.png",
+        "制御不能": "state_icon_UNCONTROL.png", "移动不能": "state_icon_WORLD_MOVE.png",
+        "冻结": "state_icon_FREEZE.png", "昏迷": "state_icon_FAINT.png",
+        "沉默": "state_icon_SILENCE.png",
+        # === DoT ===
+        "流血": "state_icon_BLEED.png", "灼烧": "state_icon_BURN.png",
+        "中毒": "state_icon_BLEED.png", "持续被害": "state_icon_BLEED.png",
+        # === 妨害 ===
+        "强化妨害": "state_icon_VOID_BUFF_CONDITION_BAD.png",
+        "弱体化解除妨害": "state_icon_VOID_BUFF_CONDITION_BAD.png",
+        # === 矢/反射 ===
+        "矢量操作": "state_icon_VECTOR_CONVERSION.png",
+        "强制咏唱待机": "state_icon_SPELL_INTERCEPT.png",
+        "全能神": "state_icon_SPELL_INTERCEPT.png",
+        "预测不能": "state_icon_INVISIBLE_MONSTER.png",
+        "天罚": "state_icon_DIVINE_RETRIBUTION_SPELL.png",
+        # === 攻击方向 ===
+        "攻击方向+": "state_icon_ATTACK_DIR_UP.png",
+        "攻击方向-": "state_icon_ATTACK_DIR_DOWN.png",
+        # === 属性颜色 ===
+        "红": "state_icon_RED_RESIST_UP.png", "绿": "state_icon_GREEN_RESIST_UP.png",
+        "蓝": "state_icon_BLUE_RESIST_UP.png", "黄": "state_icon_YELLOW_RESIST_UP.png",
+        "紫": "state_icon_PURPLE_RESIST_UP.png",
+        # === 回复 ===
+        "HP回复": "state_icon_VOID_HP_HEAL.png",
+        # === 反伤 ===
+        "反射": "state_icon_MIRROR_ATTACK.png",
+        "吸收": "state_icon_DAMAGE_ZERO.png",
     }
+    # 颜色关键词映射到对应图标
+    _color_resist = {"红":"RED","绿":"GREEN","蓝":"BLUE","黄":"YELLOW","紫":"PURPLE"}
+    for _color, _code in _color_resist.items():
+        icon_map[f"对{_color}色威力提升"] = f"state_icon_TARGET_{_code}_DAMAGE_UP.png"
+        icon_map[f"{_color}色耐性下降"] = f"state_icon_{_code}_RESIST_DOWN.png"
+        icon_map[f"{_color}色耐性提升"] = f"state_icon_{_code}_RESIST_UP.png"
     
     for keyword, icon_name in icon_map.items():
         if keyword in effect_name:
@@ -214,12 +266,12 @@ def _extract_base_name(name):
 def _render_character_card(unit, card_w, card_h):
     output = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(output)
-    
+
     if unit.get("is_empty", False):
         draw.rectangle([0, 0, card_w, card_h], fill=COLOR_EMPTY)
         draw.rectangle([0, 0, card_w, card_h], outline=(70, 70, 90), width=2)
         return output
-    
+
     card_id = str(unit.get("card_id", ""))
     name = unit.get("name", "")
     stars = int(unit.get("stars", 3))
@@ -395,10 +447,48 @@ def _render_hp_change(draw, x, y, w, delta, tag):
     box_w = min(tw + 6, w)
     draw.rectangle([x, y, x + box_w, y + 14], fill=bg)
     draw.rectangle([x, y, x + box_w, y + 14], outline=(140, 140, 140), width=1)
-    
-    draw.text((x + 3, y + 1), text, fill=color, font=font)
+
+    draw.text((x + 3, y + 3), text, fill=color, font=font)
     
     return y + 16
+
+
+def _render_sp_bars(draw, x, y, w, player_sp, enemy_sp, max_sp=300):
+    """在回合信息下方渲染双方SP条"""
+    bar_h = 10
+    gap = 4
+    font_sp = _get_font(9)
+
+    # 玩家SP条（蓝色）
+    p_pct = min(1.0, player_sp / max_sp) if max_sp > 0 else 0
+    draw.rectangle([x, y, x + w, y + bar_h], fill=(20, 20, 45))
+    if p_pct > 0:
+        fill_w = int((w - 2) * p_pct)
+        draw.rectangle([x + 1, y + 1, x + 1 + fill_w, y + bar_h - 1], fill=(55, 110, 240))
+    label_p = f"P-SP: {player_sp}/{max_sp}"
+    try:
+        tw = draw.textlength(label_p, font=font_sp)
+    except:
+        tw = len(label_p) * 9
+    draw.text((x + (w - tw) // 2, y + 3), label_p, fill=(200, 220, 255), font=font_sp)
+
+    y += bar_h + gap
+
+    # 敌方SP条（红色）
+    e_pct = min(1.0, enemy_sp / max_sp) if max_sp > 0 else 0
+    draw.rectangle([x, y, x + w, y + bar_h], fill=(20, 20, 45))
+    if e_pct > 0:
+        fill_w = int((w - 2) * e_pct)
+        draw.rectangle([x + 1, y + 1, x + 1 + fill_w, y + bar_h - 1], fill=(240, 65, 65))
+    label_e = f"E-SP: {enemy_sp}/{max_sp}"
+    try:
+        tw = draw.textlength(label_e, font=font_sp)
+    except:
+        tw = len(label_e) * 9
+    draw.text((x + (w - tw) // 2, y + 3), label_e, fill=(255, 200, 200), font=font_sp)
+
+    return y + bar_h  # 返回SP条区域底部的y坐标
+
 
 def _render_team_section(field_units, hp_changes, attack_directions, is_enemy=False):
     card_w = CARD_WIDTH
@@ -444,50 +534,51 @@ def _render_team_section(field_units, hp_changes, attack_directions, is_enemy=Fa
         buffs = unit.get("buffs", [])
         debuffs = unit.get("debuffs", [])
         _render_buff_icons(frame, x, 2, buffs, debuffs, card_w)
-        
+
         card = _render_character_card(unit, card_w, card_h)
         card_y = icon_area_h
         frame.paste(card, (x, card_y), card)
-        
+
         hp_y = card_y + card_h + 3
-        
+
         if not unit.get("is_empty"):
+            # 渲染角色的相对攻击方向箭头（来自Excel数据，显示在卡片上方）
+            atk_dirs = unit.get("attack_directions", [0])
+            if isinstance(atk_dirs, list):
+                dir_offsets = sorted(atk_dirs)
+            elif atk_dirs == 3:
+                dir_offsets = [-1, 0, 1]
+            elif atk_dirs == 2:
+                dir_offsets = [-1, 0]
+            else:
+                dir_offsets = [0]
+
+            arrow_map_p = {-1: '↙', 0: '↓', 1: '↘'}
+            arrow_map_e = {-1: '↖', 0: '↑', 1: '↗'}
+            arrow_map = arrow_map_e if is_enemy else arrow_map_p
+            dir_text = ''.join(arrow_map.get(o, '?') for o in sorted(dir_offsets))
+
+            if dir_text:
+                font_dir = _get_font(11)
+                try:
+                    dtw = draw.textlength(dir_text, font=font_dir)
+                except:
+                    dtw = len(dir_text) * 8
+                dtx = x + (card_w - dtw) // 2
+                dty = card_y - 14
+                draw.rectangle([dtx - 3, dty - 1, dtx + dtw + 3, dty + 13], fill=(0, 0, 0, 170))
+                draw.text((dtx, dty), dir_text, fill=COLOR_TEXT_GOLD, font=font_dir)
+
             current_hp = max(0, int(unit.get("hp", 0) or 0))
             max_hp = max(1, int(unit.get("max_hp", 1) or 1))
             _render_hp_bar(draw, x, hp_y, card_w, HP_BAR_HEIGHT, current_hp, max_hp)
-            
+
             change_y = hp_y + HP_BAR_HEIGHT + 3
             # HP变化显示在当前列的角色下方
             if hp_changes and col in hp_changes:
                 changes = hp_changes[col]
                 for delta, tag in changes[:2]:
                     change_y = _render_hp_change(draw, x, change_y, card_w, delta, tag)
-        
-        if attack_directions and col in attack_directions:
-            directions = attack_directions[col]
-            if directions and len(directions) >= 2:
-                attacker_arrow = directions[0]
-                target_arrow = directions[1]
-                
-                # 简洁显示：只显示攻击方向（攻击者箭头 + → + 目标箭头）
-                # 玩家攻击显示在角色图上方，敌方攻击显示在下方
-                if is_enemy:
-                    dir_text = f"{attacker_arrow}→{target_arrow}"
-                    dir_y = hp_y + HP_BAR_HEIGHT + 25
-                else:
-                    dir_text = f"{attacker_arrow}→{target_arrow}"
-                    dir_y = icon_area_h - 20
-                
-                font = _get_font(12)
-                try:
-                    tw = draw.textlength(dir_text, font=font)
-                except:
-                    tw = len(dir_text) * 8
-                tx = x + (card_w - tw) // 2
-                
-                # 添加半透明背景框
-                draw.rectangle([tx - 4, dir_y - 2, tx + tw + 4, dir_y + 14], fill=(0, 0, 0, 150))
-                draw.text((tx, dir_y), dir_text, fill=COLOR_TEXT_GOLD, font=font)
 
     return frame
 
@@ -515,6 +606,11 @@ def init_field_units(units_raw):
             arrow = _parse_arrow(name)
             pos = ARROW_TO_COL.get(arrow, -1) if arrow else -1
         
+        # 攻击方向：优先使用数据中的列表，否则从stars推断（3星默认3方向，其他默认1方向）
+        atk_dirs = u.get("attack_directions", None)
+        if atk_dirs is None:
+            atk_dirs = [-1, 0, 1] if stars >= 3 else [0]
+
         unit_data = {
             "name": name,
             "base_name": _extract_base_name(name),
@@ -524,6 +620,7 @@ def init_field_units(units_raw):
             "hp": current_hp,
             "alive": alive,
             "position": pos,
+            "attack_directions": atk_dirs,
             "buffs": u.get("buffs", []),
             "debuffs": u.get("debuffs", []),
         }
@@ -775,6 +872,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             continue
         name = u.get("name", "")
         base_name = _extract_base_name(name)
+        atk_dirs_raw = u.get("attack_directions", 3 if int(u.get("stars", 3)) >= 3 else 1)
         p_units_dict[base_name] = {
             "name": name,
             "base_name": base_name,
@@ -784,16 +882,18 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             "hp": int(u.get("hp", 10000)),
             "alive": u.get("alive", True),
             "position": -1,
+            "attack_directions": atk_dirs_raw,
             "buffs": u.get("buffs", []),
             "debuffs": u.get("debuffs", []),
         }
-    
+
     e_units_dict = {}
     for u in e_raw:
         if u.get("is_assist") or str(u.get("is_assist", "")).lower() == 'true':
             continue
         name = u.get("name", "")
         base_name = _extract_base_name(name)
+        atk_dirs_raw = u.get("attack_directions", 3 if int(u.get("stars", 3)) >= 3 else 1)
         e_units_dict[base_name] = {
             "name": name,
             "base_name": base_name,
@@ -803,13 +903,16 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             "hp": int(u.get("hp", 10000)),
             "alive": u.get("alive", True),
             "position": -1,
+            "attack_directions": atk_dirs_raw,
             "buffs": u.get("buffs", []),
             "debuffs": u.get("debuffs", []),
         }
-    
+
     round_num = 1
     turn = "player"  # 初始设置为player，等待第一个turn_switch事件
-    
+    player_sp = 0
+    enemy_sp = 0
+
     # 初始化玩家和敌方单位字典
     p_field = []
     e_field = []
@@ -872,7 +975,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             "enemy_attack_dirs": {},
             "phase_text": phase,
             "attack_info": attack_info,
-            "event_text": event_text.encode('utf-8').decode('utf-8', errors='replace')
+            "event_text": event_text.encode('utf-8').decode('utf-8', errors='replace'),
+            "player_sp": player_sp,
+            "enemy_sp": enemy_sp
         }
         frames_data.append(frame_data)
     
@@ -914,6 +1019,17 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             }
                             break
             
+            # Fix 3: 清空初始帧的BUFF/DEBUFF（A卡预触发在round_start之前已施加buff，
+            # 但未生成parsable条目，应展示干净的开局状态）
+            for u in p_field:
+                if not u.get("is_empty"):
+                    u["buffs"] = []
+                    u["debuffs"] = []
+            for u in e_field:
+                if not u.get("is_empty"):
+                    u["buffs"] = []
+                    u["debuffs"] = []
+
             save_frame("战斗开始", [dict(u) for u in p_field], [dict(u) for u in e_field])
             # 不保存"回合开始"帧，等待第一个turn_switch事件
             round_num = entry.get("round", round_num)
@@ -959,7 +1075,33 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                                 u["name"] = name
                             break
                 save_frame("回合开始", [dict(u) for u in p_field], [dict(u) for u in e_field])
-        
+
+        elif entry_type == "sp_info":
+            # 更新SP值（不创建独立帧，SP值通过save_frame随下一帧输出）
+            player_sp = entry.get("player_sp", player_sp)
+            enemy_sp = entry.get("enemy_sp", enemy_sp)
+            # 同步单位状态
+            for pos_info in entry.get("player_positions", []):
+                pos_base = _extract_base_name(pos_info.get("name", ""))
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == pos_base:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["position"] = pos_info.get("position", u["position"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                pos_base = _extract_base_name(pos_info.get("name", ""))
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == pos_base:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["position"] = pos_info.get("position", u["position"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+
         elif entry_type == "turn_switch":
             turn = entry.get("side", turn)
             # 更新现有单位的状态
@@ -1044,6 +1186,8 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                     unit["hp"] = unit["max_hp"]
                     unit["name"] = f"{name}[{arrow}]" if arrow else name
                     unit["is_empty"] = False
+                    unit["buffs"] = []   # 替补上场时清空buff
+                    unit["debuffs"] = []  # 替补上场时清空debuff
                     field[target_pos] = unit
                 else:
                     # 找一个阵亡位置或空位置
@@ -1056,6 +1200,8 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             unit["hp"] = unit["max_hp"]
                             unit["name"] = f"{name}[{arrow}]" if arrow else name
                             unit["is_empty"] = False
+                            unit["buffs"] = []   # 替补上场时清空buff
+                            unit["debuffs"] = []  # 替补上场时清空debuff
                             field[target_pos] = unit
                             break
             
@@ -1067,10 +1213,57 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             attacker_pos = entry.get("attacker_position", -1)
             attacker_arrow = entry.get("attacker_arrow", "")
             targets = entry.get("targets", [])
-            
+
             # 提取攻击者名字（去掉称号）
             attacker_name = _extract_base_name(attacker)
-            
+
+            # Fix 1: 从position数据同步HP变化（攻击后血量应立即反映在帧中）
+            for pos_info in entry.get("player_positions", []):
+                pos_name = pos_info.get("name", "")
+                pos_base = _extract_base_name(pos_name)
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == pos_base:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["max_hp"] = pos_info.get("max_hp", u["max_hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["position"] = pos_info.get("position", u["position"])
+                        u["hp_change"] = pos_info.get("hp_change", 0)
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                pos_name = pos_info.get("name", "")
+                pos_base = _extract_base_name(pos_name)
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == pos_base:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["max_hp"] = pos_info.get("max_hp", u["max_hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["position"] = pos_info.get("position", u["position"])
+                        u["hp_change"] = pos_info.get("hp_change", 0)
+                        break
+
+            # Fix 2A: 从hit_status提取特殊效果（盾抵挡/反射/回避/不屈等）
+            hit_status_map = {
+                "抵挡": "盾抵挡", "反射": "反射", "吸收": "吸收",
+                "减伤": "减伤", "回避": "回避", "不屈": "不屈"
+            }
+            special_effects = []
+            for side_positions in [
+                entry.get("player_positions", []),
+                entry.get("enemy_positions", []),
+            ]:
+                for pos_info in side_positions:
+                    hs = pos_info.get("hit_status", "")
+                    if hs:
+                        name = _extract_base_name(pos_info.get("name", ""))
+                        # hit_status是2字符中文token的拼接（如"抵挡反射"）
+                        mapped_parts = []
+                        i = 0
+                        while i < len(hs):
+                            token = hs[i:i+2]
+                            mapped_parts.append(hit_status_map.get(token, token))
+                            i += 2
+                        special_effects.append(f"{name}: {'+'.join(mapped_parts)}")
+
             # 构建事件描述
             event_text = ""
             if targets:
@@ -1084,7 +1277,12 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                 elif attack_type == "A":
                     effect_text = "支援"
                 event_text = f"{attacker_name} → {target_name}: {effect_text}"
-            
+
+            # 追加特殊效果到事件文本
+            if special_effects:
+                effect_str = " | ".join(special_effects)
+                event_text = f"{event_text}  [{effect_str}]" if event_text else effect_str
+
             # 记录攻击信息到帧数据
             attack_info = {
                 "type": "普" if attack_type in ["普", "普通攻击"] else attack_type,
@@ -1094,9 +1292,22 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                 "attacker_arrow": attacker_arrow,
                 "targets": targets
             }
-            
+
             save_frame(f"攻击[{attack_type}]", [dict(u) for u in p_field], [dict(u) for u in e_field], attack_info, event_text)
-        
+
+            # Fix 6: 攻击帧已记录阵亡状态，将死单位移出场外（position=-1）
+            # 后续帧显示空位，等待enter事件替补上场
+            for u in p_field:
+                if not u.get("is_empty") and not u.get("alive", True):
+                    u["position"] = -1
+                    u["buffs"] = []
+                    u["debuffs"] = []
+            for u in e_field:
+                if not u.get("is_empty") and not u.get("alive", True):
+                    u["position"] = -1
+                    u["buffs"] = []
+                    u["debuffs"] = []
+
         elif entry_type == "assist_prepare":
             # A卡效果触发前的帧
             assist_name = entry.get("assist_name", "")
@@ -1175,7 +1386,19 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
         
         elif entry_type == "battle_end":
             winner = entry.get("winner")
-            save_frame(f"{winner}胜利", [dict(u) for u in p_field], [dict(u) for u in e_field])
+            # Fix 4: 标记败方所有单位为阵亡状态
+            losing_field = e_field if winner == "player" else p_field
+            for u in losing_field:
+                if not u.get("is_empty"):
+                    u["alive"] = False
+                    u["hp"] = 0
+                    u["buffs"] = []
+                    u["debuffs"] = []
+            reason = entry.get("reason", "")
+            event_text = f"战斗结束: {'玩家' if winner == 'player' else '敌方'}胜利"
+            if reason:
+                event_text += f" ({reason})"
+            save_frame(f"{winner}胜利", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
     
     return frames_data
 
@@ -1305,12 +1528,13 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
         )
         
         EVENT_TEXT_HEIGHT = 30
+        SP_BAR_HEIGHT = 28
         fw = max(e_frame.width, p_frame.width) + PADDING * 2
-        fh = e_frame.height + SECTION_SPACING + p_frame.height + PADDING * 2 + EVENT_TEXT_HEIGHT
-        
+        fh = e_frame.height + SECTION_SPACING + p_frame.height + PADDING * 2 + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
+
         bg = Image.new('RGB', (fw, fh), COLOR_FRAME_BG)
         draw = ImageDraw.Draw(bg)
-        
+
         # 显示事件描述（最上方）
         event_text = frame_data.get("event_text", "")
         if event_text:
@@ -1320,61 +1544,70 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
             except:
                 tw = len(event_text) * 8
             tx = (fw - tw) // 2
-            ty = 5
+            ty = 8
             # 添加半透明背景框
-            draw.rectangle([tx - 8, ty - 2, tx + tw + 8, ty + 20], fill=(0, 0, 0, 180))
+            draw.rectangle([tx - 8, ty - 4, tx + tw + 8, ty + 16], fill=(0, 0, 0, 180))
             draw.text((tx, ty), event_text, fill=(255, 255, 200), font=font_event)
-        
+
         ex = (fw - e_frame.width) // 2
         bg.paste(e_frame, (ex, PADDING + EVENT_TEXT_HEIGHT), e_frame)
-        
-        px = (fw - p_frame.width) // 2
-        py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT
-        bg.paste(p_frame, (px, py), p_frame)
-        
+
         font_small = _get_font(11)
         frame_text = f"[{frame_idx+1}/{total_frames}]"
         draw.text((12, 12 + EVENT_TEXT_HEIGHT), frame_text, fill=(160, 160, 160), font=font_small)
-        
+
         font_center = _get_font(16)
-        
+
         turn_text = "Player Turn" if frame_data['turn'] == "player" else "Enemy Turn"
         round_info = f"Round {frame_data['round']} - {turn_text}"
-        
+
         try:
             tw = draw.textlength(round_info, font=font_center)
         except:
             tw = len(round_info) * 10
-        
+
         cx = (fw - tw) // 2
-        cy = e_frame.height + PADDING + 8 + EVENT_TEXT_HEIGHT
-        
-        draw.rectangle([cx - 12, cy - 6, cx + tw + 12, cy + 20], fill=COLOR_INFO_BG)
-        draw.rectangle([cx - 10, cy - 4, cx + tw + 10, cy + 18], fill=COLOR_INFO_BORDER)
-        
+        cy = e_frame.height + PADDING + 12 + EVENT_TEXT_HEIGHT
+
+        draw.rectangle([cx - 12, cy - 10, cx + tw + 12, cy + 16], fill=COLOR_INFO_BG)
+        draw.rectangle([cx - 10, cy - 8, cx + tw + 10, cy + 14], fill=COLOR_INFO_BORDER)
+
         draw.text((cx, cy), round_info, fill=COLOR_TEXT_GOLD, font=font_center)
-        
+
+        # SP条（回合信息下方）
+        sp_y = cy + 22
+        sp_w = fw - PADDING * 4
+        sp_x = (fw - sp_w) // 2
+        _render_sp_bars(draw, sp_x, sp_y, sp_w,
+                       frame_data.get("player_sp", 0),
+                       frame_data.get("enemy_sp", 0))
+
+        px = (fw - p_frame.width) // 2
+        py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
+        bg.paste(p_frame, (px, py), p_frame)
+
         frames.append(bg)
-    
+
     if frames:
         winner = result.get("winner", "draw")
         win_text_dict = {"player": "Player WIN!", "enemy": "Enemy WIN!", "draw": "Draw!"}
         win_text = win_text_dict.get(winner, "Battle End")
-        
-        last = frames[-1].copy()
+
+        # 创建独立的胜利帧（避免与最后一帧信息重叠）
+        cw, ch = frames[-1].size
+        last = Image.new('RGB', (cw, ch), COLOR_FRAME_BG)
         draw = ImageDraw.Draw(last)
         font_win = _get_font(28)
         try:
             tw = draw.textlength(win_text, font=font_win)
         except:
             tw = len(win_text) * 20
-        cw, ch = last.size
         cx = (cw - tw) // 2
         cy = (ch - 40) // 2
         draw.rectangle([cx - 12, cy - 4, cx + tw + 12, cy + 32], fill=(0, 0, 0))
         draw.text((cx, cy), win_text, fill=(255, 215, 0), font=font_win)
         frames.append(last)
-    
+
     if output_path is None:
         from datetime import datetime
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1394,9 +1627,9 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
                     pass
     
     scaled_frames = []
-    scale_factor = 2
+    scale_factor = 1
     for f in frames:
-        new_size = (f.width * scale_factor, f.height * scale_factor)
+        new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
         scaled_f = f.resize(new_size, Image.Resampling.LANCZOS)
         scaled_frames.append(scaled_f)
     
@@ -1407,8 +1640,7 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
         duration=frame_duration,
         loop=0,
         disposal=2,
-        optimize=False,
-        quality=95
+        optimize=False, quality=30
     )
     
     print("GIF生成成功！")
@@ -1465,12 +1697,13 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
         )
         
         EVENT_TEXT_HEIGHT = 30
+        SP_BAR_HEIGHT = 28
         fw = max(e_frame.width, p_frame.width) + PADDING * 2
-        fh = e_frame.height + SECTION_SPACING + p_frame.height + PADDING * 2 + EVENT_TEXT_HEIGHT
-        
+        fh = e_frame.height + SECTION_SPACING + p_frame.height + PADDING * 2 + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
+
         bg = Image.new('RGB', (fw, fh), COLOR_FRAME_BG)
         draw = ImageDraw.Draw(bg)
-        
+
         # 显示事件描述（最上方）
         event_text = frame_data.get("event_text", "")
         if event_text:
@@ -1480,70 +1713,79 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
             except:
                 tw = len(event_text) * 8
             tx = (fw - tw) // 2
-            ty = 5
+            ty = 8
             # 添加半透明背景框
-            draw.rectangle([tx - 8, ty - 2, tx + tw + 8, ty + 20], fill=(0, 0, 0, 180))
+            draw.rectangle([tx - 8, ty - 4, tx + tw + 8, ty + 16], fill=(0, 0, 0, 180))
             draw.text((tx, ty), event_text, fill=(255, 255, 200), font=font_event)
-        
+
         ex = (fw - e_frame.width) // 2
         bg.paste(e_frame, (ex, PADDING + EVENT_TEXT_HEIGHT), e_frame)
-        
-        px = (fw - p_frame.width) // 2
-        py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT
-        bg.paste(p_frame, (px, py), p_frame)
-        
+
         font_small = _get_font(11)
         frame_text = f"[{frame_idx+1}/{total_frames}]"
         draw.text((12, 12 + EVENT_TEXT_HEIGHT), frame_text, fill=(160, 160, 160), font=font_small)
-        
+
         font_center = _get_font(16)
-        
+
         turn_text = "Player Turn" if frame_data['turn'] == "player" else "Enemy Turn"
         round_info = f"Round {frame_data['round']} - {turn_text}"
-        
+
         try:
             tw = draw.textlength(round_info, font=font_center)
         except:
             tw = len(round_info) * 10
-        
+
         cx = (fw - tw) // 2
-        cy = e_frame.height + PADDING + 8 + EVENT_TEXT_HEIGHT
-        
-        draw.rectangle([cx - 12, cy - 6, cx + tw + 12, cy + 20], fill=COLOR_INFO_BG)
-        draw.rectangle([cx - 10, cy - 4, cx + tw + 10, cy + 18], fill=COLOR_INFO_BORDER)
-        
+        cy = e_frame.height + PADDING + 12 + EVENT_TEXT_HEIGHT
+
+        draw.rectangle([cx - 12, cy - 10, cx + tw + 12, cy + 16], fill=COLOR_INFO_BG)
+        draw.rectangle([cx - 10, cy - 8, cx + tw + 10, cy + 14], fill=COLOR_INFO_BORDER)
+
         draw.text((cx, cy), round_info, fill=COLOR_TEXT_GOLD, font=font_center)
-        
+
+        # SP条（回合信息下方）
+        sp_y = cy + 22
+        sp_w = fw - PADDING * 4
+        sp_x = (fw - sp_w) // 2
+        _render_sp_bars(draw, sp_x, sp_y, sp_w,
+                       frame_data.get("player_sp", 0),
+                       frame_data.get("enemy_sp", 0))
+
+        px = (fw - p_frame.width) // 2
+        py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
+        bg.paste(p_frame, (px, py), p_frame)
+
         frames.append(bg)
-    
+
     if frames:
         winner = result.get("winner", "draw")
         win_text_dict = {"player": "Player WIN!", "enemy": "Enemy WIN!", "draw": "Draw!"}
         win_text = win_text_dict.get(winner, "Battle End")
-        
-        last = frames[-1].copy()
+
+        # 创建独立的胜利帧（避免与最后一帧信息重叠）
+        cw, ch = frames[-1].size
+        last = Image.new('RGB', (cw, ch), COLOR_FRAME_BG)
         draw = ImageDraw.Draw(last)
         font_win = _get_font(28)
         try:
             tw = draw.textlength(win_text, font=font_win)
         except:
             tw = len(win_text) * 20
-        cw, ch = last.size
         cx = (cw - tw) // 2
         cy = (ch - 40) // 2
         draw.rectangle([cx - 12, cy - 4, cx + tw + 12, cy + 32], fill=(0, 0, 0))
         draw.text((cx, cy), win_text, fill=(255, 215, 0), font=font_win)
         frames.append(last)
-    
+
     if not frames:
         print("GIF生成失败：没有帧数据")
         return None
-    
+
     # 缩放并保存到BytesIO
     scaled_frames = []
-    scale_factor = 2
+    scale_factor = 1
     for f in frames:
-        new_size = (f.width * scale_factor, f.height * scale_factor)
+        new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
         scaled_f = f.resize(new_size, Image.Resampling.LANCZOS)
         scaled_frames.append(scaled_f)
     
@@ -1556,8 +1798,7 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
         duration=frame_duration,
         loop=0,
         disposal=2,
-        optimize=False,
-        quality=95
+        optimize=False, quality=30
     )
     buffer.seek(0)
     

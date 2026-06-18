@@ -1,0 +1,4 @@
+- [项目状态](project-state.md) — 幻想收束KOOK Bot完整项目状态：战斗系统、GIF渲染、A卡技能、抽卡系统、KOOK集成
+- [GIF渲染器修复记录](gif-renderer-fixes.md) — 2026-06-18一轮修复：攻击帧HP同步、特殊效果可视化、初始帧清BUFF、战斗结束败方全灭、阵亡清场替补替换、SP条实时显示
+- [QQ机器人WebSocket版部署指南](qq-bot-ws-guide.md) — botpy官方SDK部署：群聊被动回复、Cloudflare图片隧道、openid用户系统、24/7 systemd服务
+- [QQ机器人迁移记录](qq-bot-migration-log.md) — 2026-06-18从Napcat到botpy WebSocket完整迁移：通信层替换、图片方案演进、已知问题修复

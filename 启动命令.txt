@@ -1,0 +1,93 @@
+============================================
+  QQ机器人 (qq_bot_ws.py) 部署指南
+  更新: 2026-06-19
+============================================
+
+一、首次部署
+============================================
+
+1. 上传文件到服务器 /home/root/zmdbot/
+
+2. 安装依赖:
+   pip3 install qq-botpy flask requests pillow openpyxl
+
+3. 安装 cloudflared (图片隧道):
+   curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+   chmod +x /usr/local/bin/cloudflared
+
+4. 编辑 config.py 填写:
+   QQ_BOT_APP_ID  = "你的AppID"
+   QQ_BOT_SECRET  = "你的Secret"
+   QQ_BOT_TOKEN   = "你的Token"
+   ADMIN_QQ       = "你的openid"
+   IMAGE_HOST     = ""  (启动后自动填写)
+
+
+二、生产环境部署 (24/7 systemd 守护进程)
+============================================
+
+  cd /home/root/zmdbot
+  sudo bash setup_services.sh
+
+安装后Bot崩溃自动重启。
+
+管理命令:
+  systemctl status qqbot              # 查看状态
+  journalctl -u qqbot -f              # 实时日志
+  systemctl restart qqbot             # 重启
+  systemctl stop qqbot                # 停止
+
+隧道地址变化时更新:
+  journalctl -u qqbot-tunnel -n 5 | grep trycloudflare
+  复制地址到 config.py 的 IMAGE_HOST
+  systemctl restart qqbot
+
+
+三、开发调试 (前台运行)
+============================================
+
+终端1 - Bot:
+  cd /home/root/zmdbot
+  python3 qq_bot_ws.py
+
+终端2 - 图片隧道:
+  cloudflared tunnel --url http://localhost:18080
+  拿到地址后更新 config.py IMAGE_HOST，重启Bot
+
+一键脚本:
+  ./start_qq_bot.sh    # 启动
+  ./stop_qq_bot.sh     # 停止
+
+
+四、config.py 完整配置
+============================================
+
+QQ_BOT_APP_ID = "1903631383"
+QQ_BOT_SECRET = "xxx"
+QQ_BOT_TOKEN = "xxx"
+ADMIN_QQ = "B9A2B648C9..."
+IMAGE_HOST = "xxx.trycloudflare.com"
+
+# 以下沿用旧配置
+NAPCAT_HOST = "127.0.0.1"
+FLASK_HOST = "0.0.0.0"
+FLASK_PORT = 5000
+PITY_LIMIT = 150
+GACHA_COST = 300
+GACHA10_COST = 3000
+... (其余保持不变)
+
+
+五、已实现命令
+============================================
+
+签到  获取呱太  十连  单抽  限定十连
+战斗  对战  BOSS战  挑战 1~10
+战斗日志  战斗GIF
+排行榜  抽卡排行  个人记录
+队伍  队伍我的卡  队伍设置  队伍切换
+队伍自动配队  防守队
+兑换呱太  红抽  蓝抽  三王女
+昵称  绑定QQ号
+管理员: @用户 呱太/蓝碎片/红碎片 数量
+管理员: 全榜替 OpenID QQ号

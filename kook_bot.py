@@ -964,7 +964,9 @@ def generate_ai_team(difficulty=2):
     import random
     battle_cards = []
     chars_list = list(characters.values()) if isinstance(characters, dict) else characters
-    available = [c for c in chars_list if c.get("type") == "battle"]
+    # 优先使用3星角色（有完整的战斗数值），不足时降级到全部角色
+    available_3star = [c for c in chars_list if c.get("type") == "battle" and c.get("rarity", 0) >= 3]
+    available = available_3star if len(available_3star) >= 6 else [c for c in chars_list if c.get("type") == "battle"]
     
     for i in range(6):
         if available:
@@ -974,7 +976,8 @@ def generate_ai_team(difficulty=2):
                 available = [c for c in available if c["id"] != card["id"]]
     
     assist_cards = []
-    available_assist = [c for c in chars_list if c.get("type") == "assist"]
+    available_assist_3star = [c for c in chars_list if c.get("type") == "assist" and c.get("rarity", 0) >= 3]
+    available_assist = available_assist_3star if len(available_assist_3star) >= 6 else [c for c in chars_list if c.get("type") == "assist"]
     for i in range(6):
         if available_assist:
             card = random.choice(available_assist)
@@ -1292,7 +1295,7 @@ def send_kook_card_message(channel_id, card, quote_msg_id=None):
     data = {
         "channel_id": channel_id,
         "type": 10,
-        "content": json.dumps(card, ensure_ascii=False)
+        "content": json.dumps([card], ensure_ascii=False)
     }
     
     # 添加回复消息ID
@@ -3864,7 +3867,8 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
         log_info(f"挑战排名开始: {user_id} vs {target_user_id}")
         result = BATTLE_INSTANCE.start_battle(
             attacker_team,
-            defender_team
+            defender_team,
+            extra_characters={**CHARACTERS, **BATTLE_CHARACTERS}
         )
         
         # 保存战斗日志（只保留最后一次）
@@ -3950,7 +3954,8 @@ def handle_boss_battle(user_id, channel_id, raw_message, msg_id=None):
         log_info(f"BOSS战开始: {user_id} vs BOSS({BOSS_CARD_ID} {boss_name})")
         BOSS_BATTLE_COOLDOWN[user_id] = datetime.now().timestamp()
         result = BATTLE_INSTANCE.start_boss_battle(
-            player_team, str(BOSS_CARD_ID), initial_sp=300
+            player_team, str(BOSS_CARD_ID), initial_sp=300,
+            extra_characters={**CHARACTERS, **BATTLE_CHARACTERS}
         )
 
         # 保存战斗日志（只保留最后一次）
@@ -4075,7 +4080,7 @@ def handle_battle(user_id, channel_id, raw_message, msg_id=None):
         # 执行战斗
         log_info(f"战斗开始: {user_id} vs AI难度{ai_difficulty}")
         # 使用BATTLE_CHARACTERS作为额外角色数据，因为它包含A卡效果信息
-        result = BATTLE_INSTANCE.start_battle(player_team, enemy_team, challenger="player", extra_characters=BATTLE_CHARACTERS)
+        result = BATTLE_INSTANCE.start_battle(player_team, enemy_team, challenger="player", extra_characters={**CHARACTERS, **BATTLE_CHARACTERS})
         
         # 获取战斗结果
         winner = result.get("winner", "unknown")

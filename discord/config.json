@@ -1,0 +1,7 @@
+{
+    "TOKEN": "YOUR_DISCORD_BOT_TOKEN",
+    "OWNER_ID": 0,
+    "PREFIX": "!",
+    "GACHA_COOLDOWN": 60,
+    "MAX_DAILY_GACHA": 10
+}

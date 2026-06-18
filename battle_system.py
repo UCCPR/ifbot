@@ -785,7 +785,7 @@ class BattleSystem:
                     speed=char_data.get("dexterity", 1000),  # 器用=速度
                     attribute=attribute,
                     attack_type=char_data.get("attack_type", "物理"),
-                    attack_directions=len(char_data.get("attack_directions", [0])) if isinstance(char_data.get("attack_directions"), list) else char_data.get("attack_directions", 1),
+                    attack_directions=char_data.get("attack_directions", [0]) if isinstance(char_data.get("attack_directions"), list) else [0],
                     side=char_data.get("side", "科学"),
                     skill=skill,
                     ultimate=ultimate,
@@ -807,7 +807,7 @@ class BattleSystem:
         return Character(
             card_id=str(card_id), name=f'未知({str(card_id)[:6]})',
             hp=10000, attack=3000, defense=2000, speed=1000,
-            attribute='红', attack_type='物理', attack_directions=1, side='科学',
+            attribute='红', attack_type='物理', attack_directions=[0], side='科学',
             skill=None, ultimate=None, assist_effect1=None, assist_effect2=None, passives=[]
         )
 
@@ -856,7 +856,7 @@ class BattleSystem:
                     speed=char_data.get("speed", 1000) if char_data.get("speed") else 500,
                     attribute=char_data.get("element", char_data.get("attribute", "红")), 
                     attack_type=char_data.get("attack_type", "物理"), 
-                    attack_directions=len(char_data.get("attack_directions", [0])) if isinstance(char_data.get("attack_directions"), list) else 1, 
+                    attack_directions=char_data.get("attack_directions", [0]) if isinstance(char_data.get("attack_directions"), list) else [0],
                     side=char_data.get("side", "科学"),
                     skill=None, 
                     ultimate=None, 
@@ -1323,6 +1323,11 @@ class BattleSystem:
         for target in targets:
             # 回避判定
             if self._check_dodge(target, attacker):
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
+                self._last_damage_info[side][target.character.name] = {
+                    "dodged": True, "blocked": False, "reflected": False,
+                    "absorbed": False, "reduced": False, "tenacious": False
+                }
                 results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
                 defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
                 continue
@@ -1337,7 +1342,7 @@ class BattleSystem:
             results.extend(reflect_logs)
 
             # 记录受击状态
-            hit_status = {"blocked": False, "reflected": False, "absorbed": False, "reduced": False}
+            hit_status = {"blocked": False, "reflected": False, "absorbed": False, "reduced": False, "dodged": False, "tenacious": False}
             
             # 检查是否有反射效果
             if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
@@ -1347,7 +1352,7 @@ class BattleSystem:
             if self._check_shield(target, attacker):
                 hit_status["blocked"] = True
                 # 判断目标是玩家还是敌方：攻击方在allies中说明是玩家攻击，目标是敌方
-                side = "enemy" if attacker in allies else "player"
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
                 self._last_damage_info[side][target.character.name] = hit_status
                 results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
                 continue
@@ -1358,7 +1363,7 @@ class BattleSystem:
                 hit_status["reduced"] = True
 
             # 记录受击状态
-            side = "enemy" if attacker in allies else "player"
+            side = "player" if id(target) in self._player_unit_ids else "enemy"
             self._last_damage_info[side][target.character.name] = hit_status
 
             target.current_hp -= damage
@@ -1368,6 +1373,11 @@ class BattleSystem:
 
             if target.current_hp <= 0:
                 if self._check_tenacity(target):
+                    side = "player" if id(target) in self._player_unit_ids else "enemy"
+                    self._last_damage_info[side][target.character.name] = {
+                        "tenacious": True, "blocked": False, "dodged": False,
+                        "reflected": False, "absorbed": False, "reduced": False
+                    }
                     results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
                 else:
                     target.current_hp = 0; target.alive = False
@@ -1387,7 +1397,7 @@ class BattleSystem:
         attacker_sp = int(SP_PER_ATTACK * self._get_sp_rate(attacker)) + assist_sp
 
         return results, attacker_sp, defender_sp
-    
+
     def execute_skill_attack(self, attacker: BattleUnit, enemies: List[BattleUnit],
                             can_use_skill: bool = True, skill_sp: int = 30,
                             allies: List[BattleUnit] = None) -> Tuple[List[str], int, int, int]:
@@ -1418,6 +1428,11 @@ class BattleSystem:
         for target in targets:
             # 回避判定
             if self._check_dodge(target, attacker):
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
+                self._last_damage_info[side][target.character.name] = {
+                    "dodged": True, "blocked": False, "reflected": False,
+                    "absorbed": False, "reduced": False, "tenacious": False
+                }
                 results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
                 defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
                 continue
@@ -1434,8 +1449,25 @@ class BattleSystem:
 
             # 盾判定：抵挡一次非贯通伤害
             if self._check_shield(target, attacker):
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
+                hit_status = {"blocked": True, "dodged": False, "reflected": False,
+                              "absorbed": False, "reduced": False, "tenacious": False}
+                if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
+                    hit_status["reflected"] = True
+                self._last_damage_info[side][target.character.name] = hit_status
                 results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
                 continue
+
+            # 记录受击状态（减伤）
+            side = "player" if id(target) in self._player_unit_ids else "enemy"
+            hit_status = {"blocked": False, "dodged": False, "reflected": False,
+                          "absorbed": False, "reduced": False, "tenacious": False}
+            if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
+                hit_status["reflected"] = True
+            dmg_reduce_mult, _ = target.get_buff_multiplier("减伤")
+            if dmg_reduce_mult > 0:
+                hit_status["reduced"] = True
+            self._last_damage_info[side][target.character.name] = hit_status
 
             target.current_hp -= damage
             has_damage_this_attack = True
@@ -1443,6 +1475,10 @@ class BattleSystem:
                 has_crit_this_attack = True
             if target.current_hp <= 0:
                 if self._check_tenacity(target):
+                    self._last_damage_info[side][target.character.name] = {
+                        "tenacious": True, "blocked": False, "dodged": False,
+                        "reflected": False, "absorbed": False, "reduced": False
+                    }
                     results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
                 else:
                     target.current_hp = 0; target.alive = False
@@ -1507,6 +1543,11 @@ class BattleSystem:
         for target in targets:
             # 回避判定
             if self._check_dodge(target, attacker):
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
+                self._last_damage_info[side][target.character.name] = {
+                    "dodged": True, "blocked": False, "reflected": False,
+                    "absorbed": False, "reduced": False, "tenacious": False
+                }
                 results.append(f"{attacker.character.name} -> {target.character.name} (回避！)")
                 defender_sp += int(SP_PER_DAMAGED * self._get_sp_rate(target))
                 continue
@@ -1523,8 +1564,25 @@ class BattleSystem:
 
             # 盾判定：抵挡一次非贯通伤害
             if self._check_shield(target, attacker):
+                side = "player" if id(target) in self._player_unit_ids else "enemy"
+                hit_status = {"blocked": True, "dodged": False, "reflected": False,
+                              "absorbed": False, "reduced": False, "tenacious": False}
+                if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
+                    hit_status["reflected"] = True
+                self._last_damage_info[side][target.character.name] = hit_status
                 results.append(f"{target_name} ({damage}伤害，盾抵挡！) [{damage_type}]")
                 continue
+
+            # 记录受击状态（减伤）
+            side = "player" if id(target) in self._player_unit_ids else "enemy"
+            hit_status = {"blocked": False, "dodged": False, "reflected": False,
+                          "absorbed": False, "reduced": False, "tenacious": False}
+            if len(reflect_logs) > 0 and "反射" in reflect_logs[-1]:
+                hit_status["reflected"] = True
+            dmg_reduce_mult, _ = target.get_buff_multiplier("减伤")
+            if dmg_reduce_mult > 0:
+                hit_status["reduced"] = True
+            self._last_damage_info[side][target.character.name] = hit_status
 
             target.current_hp -= damage
             has_damage_this_attack = True
@@ -1532,6 +1590,10 @@ class BattleSystem:
                 has_crit_this_attack = True
             if target.current_hp <= 0:
                 if self._check_tenacity(target):
+                    self._last_damage_info[side][target.character.name] = {
+                        "tenacious": True, "blocked": False, "dodged": False,
+                        "reflected": False, "absorbed": False, "reduced": False
+                    }
                     results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
                 else:
                     target.current_hp = 0; target.alive = False
@@ -2254,6 +2316,8 @@ class BattleSystem:
         
         # 跟踪伤害事件信息（使用实例变量，以便在其他方法中访问）
         self._last_damage_info = {"player": {}, "enemy": {}}
+        # 记录玩家单位ID集合，用于攻击方法中判断目标所属阵营
+        self._player_unit_ids = {id(u) for u in player_units if not u.is_assist}
         
         def _log(text, parsable=None):
             nonlocal last_player_hp, last_enemy_hp
@@ -2270,9 +2334,11 @@ class BattleSystem:
                 return 0
             
             def get_hit_status(name, side):
-                """获取受击状态（抵挡、反射、特殊BUFF）"""
+                """获取受击状态（回避、抵挡、反射、不屈、特殊BUFF）"""
                 status = ""
                 damage_info = self._last_damage_info.get(side, {}).get(name, {})
+                if damage_info.get("dodged", False):
+                    status += "回避"
                 if damage_info.get("blocked", False):
                     status += "抵挡"
                 if damage_info.get("reflected", False):
@@ -2281,6 +2347,8 @@ class BattleSystem:
                     status += "吸收"
                 if damage_info.get("reduced", False):
                     status += "减伤"
+                if damage_info.get("tenacious", False):
+                    status += "不屈"
                 return status
             
             if isinstance(text, list):
@@ -2809,19 +2877,34 @@ class BattleSystem:
         
         return self._create_result(winner, MAX_BATTLE_ROUNDS, battle_log, parsable_battle_log, player_units, enemy_units)
 
-    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 300) -> dict:
+    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 300, extra_characters: dict = None) -> dict:
         """BOSS战：玩家队伍 vs 单个1500万血量BOSS（12回合限制）
 
         :param player_team: 玩家队伍数据 {"battle_cards": [...], "assist_cards": [...]}
         :param boss_card_id: BOSS角色卡牌ID
         :param initial_sp: 玩家初始SP（默认300，即开局满SP）
+        :param extra_characters: 额外角色数据（用于补充战斗数据库中没有的卡）
         :return: BOSS战结果字典
         """
         log_battle("=" * 50)
         log_battle(f"BOSS战开始！BOSS={boss_card_id}")
 
-        # 获取BOSS角色信息
+        # 获取BOSS角色信息（优先从extra_characters查找）
         boss_char = self.get_character(boss_card_id)
+        if not boss_char and extra_characters:
+            char_data = extra_characters.get(str(boss_card_id))
+            if char_data:
+                boss_char = Character(
+                    card_id=str(boss_card_id),
+                    name=char_data.get("name", f"BOSS({boss_card_id})"),
+                    hp=char_data.get("hp", 100000),
+                    attack=char_data.get("attack", 5000),
+                    defense=char_data.get("defense", 3000),
+                    speed=char_data.get("dexterity", char_data.get("speed", 1000)),
+                    attribute=char_data.get("element", char_data.get("attribute", "红")),
+                    attack_type=char_data.get("attack_type", "物理"),
+                    side=char_data.get("side", "科学"),
+                )
         if not boss_char:
             boss_char = self._get_fallback_character(boss_card_id)
 
@@ -2840,7 +2923,8 @@ class BattleSystem:
             result = self.start_battle(
                 player_team, boss_team,
                 challenger="player",
-                initial_player_sp=initial_sp
+                initial_player_sp=initial_sp,
+                extra_characters=extra_characters
             )
         finally:
             # 恢复BOSS原始HP
@@ -2890,6 +2974,8 @@ class BattleSystem:
                 "alive": u.alive,
                 "is_assist": u.is_assist,
                 "position": u.position,
+                "stars": u.character.stars,
+                "attack_directions": u.character.attack_directions,
                 "buffs": [{"name": b.name, "magnitude": b.magnitude} for b in u.buffs],
                 "debuffs": [{"name": d.name, "magnitude": d.magnitude} for d in u.debuffs],
             }
