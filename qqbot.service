@@ -1,12 +1,13 @@
 [Unit]
 Description=QQ Bot (botpy WebSocket)
 After=network.target qqbot-tunnel.service
-Requires=qqbot-tunnel.service
+Wants=qqbot-tunnel.service
 
 [Service]
 Type=simple
 WorkingDirectory=/home/root/zmdbot
 ExecStart=/usr/bin/python3 qq_bot_ws.py
+# 崩溃自动重启
 Restart=always
 RestartSec=10
 

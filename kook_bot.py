@@ -1685,6 +1685,7 @@ def handle_box_open(user_id: str, channel_id: str, open_input: str, msg_id=None)
 
     red_crystal_gained = 0
     blue_crystal_gained = 0
+    auto_conversion_messages = []
 
     for idx in indices:
         box = boxes[idx]
@@ -1729,7 +1730,13 @@ def handle_box_open(user_id: str, channel_id: str, open_input: str, msg_id=None)
             add_card_collection(user_id, card_id, chara_name, stars, limit_type)
         elif stars == 3:
             add_recent_3star(user_id, card_id, str(character.get("chara_id", "")), chara_name, limit_type)
-            add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+            collection = add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+            # 自动转化：已有≥6张重复，再抽到同一3星卡→100蓝碎片
+            dup_count = collection.get(card_id, {}).get("count", 0)
+            if dup_count >= 7:
+                add_blue_crystal(user_id, 100)
+                blue_crystal_gained += 100
+                auto_conversion_messages.append(f"🔄 {chara_name} (x{dup_count}) → 100蓝碎片")
 
         got_3star = (stars == 3)
         is_fes_3star = got_3star and (limit_type == "フェス限定")
@@ -1791,6 +1798,10 @@ def handle_box_open(user_id: str, channel_id: str, open_input: str, msg_id=None)
             clear_box_session(user_id)
 
         fes_messages = [r.get("fes_message") for r in opened_results if r.get("fes_message")]
+
+        if auto_conversion_messages:
+            result_text = "\n".join(auto_conversion_messages) + "\n" + result_text
+
         if fes_messages:
             result_text = "\n".join(fes_messages) + "\n" + result_text
 

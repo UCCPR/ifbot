@@ -18,6 +18,9 @@ ICON_DIR = BASE_DIR / "iconimage"
 LEVEL_DIR = BASE_DIR / "level"
 STATE_DIR = BASE_DIR / "state_icon"
 
+# 从战斗系统导入权威 buff icon 映射（单一数据源）
+from battle_system import BUFF_ICON_MAP, BUFF_ICON_SUFFIX, DEBUFF_ICON_SUFFIX
+
 CARD_WIDTH = 80
 CARD_HEIGHT = 100
 ICON_SIZE = 16
@@ -164,89 +167,74 @@ def _find_character_icon(chara_id):
     
     return None
 
-def _get_state_icon(effect_name):
-    # Debuff关键词（负面效果）
-    debuff_keywords = ["下降", "封印", "沉默", "冻结", "昏迷", "流血", "灼烧", "中毒", "减伤",
-                       "妨害", "被害", "感电", "气绝", "不能", "DOWN"]
-    is_debuff = any(kw in effect_name for kw in debuff_keywords)
-    
-    icon_map = {
-        # === 攻击/防御 ===
-        "攻击": "state_icon_ATK_UP.png", "物攻提升": "state_icon_ATK_UP.png",
-        "物攻下降": "state_icon_ATK_DOWN.png", "异攻提升": "state_icon_INT_UP.png",
-        "异攻下降": "state_icon_INT_DOWN.png", "防御": "state_icon_DEF_UP.png",
-        "物防提升": "state_icon_DEF_UP.png", "物防下降": "state_icon_DEF_DOWN.png",
-        "异防提升": "state_icon_MIND_UP.png", "异防下降": "state_icon_MIND_DOWN.png",
-        # === 暴击 ===
-        "暴伤": "state_icon_CRITICAL_DAMAGE_RATE_UP.png", "暴伤提升": "state_icon_CRITICAL_DAMAGE_RATE_UP.png",
-        "暴击率": "state_icon_CRITICAL_RESIST_RATE_UP.png", "暴击率提升": "state_icon_CRITICAL_RESIST_RATE_UP.png",
-        "暴击防御": "state_icon_CRITICAL_DAMAGE_RATE_UP.png", "暴击防御提升": "state_icon_CRITICAL_DAMAGE_RATE_UP.png",
-        # === 技能/必杀 ===
-        "必杀威力": "state_icon_SKILL_DAMAGE_UP.png", "必杀威力提升": "state_icon_SKILL_DAMAGE_UP.png",
-        "技能威力": "state_icon_SKILL_DAMAGE_UP.png", "技能威力提升": "state_icon_SKILL_DAMAGE_UP.png",
-        # === SP ===
-        "SP获得量": "state_icon_SP_UP.png", "SP获得量提升": "state_icon_SP_UP.png",
-        # === 特殊防御 ===
-        "盾": "state_icon_DAMAGE_COVER.png", "获得盾": "state_icon_DAMAGE_COVER.png",
-        "不屈": "state_icon_GUTS.png", "减伤": "state_icon_DAMAGE_COVER.png",
-        "回避率": "state_icon_SPECIAL_ENHANCED.png", "回避率提升": "state_icon_SPECIAL_ENHANCED.png",
-        # === 特殊buff ===
-        "必暴": "state_icon_CRITICAL_RESIST_RATE_UP.png",
-        "贯通": "state_icon_PIERCING.png",
-        "强耐": "state_icon_STATE_RESIST.png",
-        "弱耐": "state_icon_STATE_RESIST.png",
-        "嘲讽": "state_icon_TARGET_RED_DAMAGE_UP.png",
-        # === 控制类debuff ===
-        "封印": "state_icon_SEAL.png", "a卡封印": "state_icon_SILENCE.png",
-        "技能封印": "state_icon_SEAL.png", "必杀封印": "state_icon_SEAL.png",
-        "气绝": "state_icon_FAINT.png", "感电": "state_icon_SHOCK.png",
-        "制御不能": "state_icon_UNCONTROL.png", "移动不能": "state_icon_WORLD_MOVE.png",
-        "冻结": "state_icon_FREEZE.png", "昏迷": "state_icon_FAINT.png",
-        "沉默": "state_icon_SILENCE.png",
-        # === DoT ===
-        "流血": "state_icon_BLEED.png", "灼烧": "state_icon_BURN.png",
-        "中毒": "state_icon_BLEED.png", "持续被害": "state_icon_BLEED.png",
-        # === 妨害 ===
-        "强化妨害": "state_icon_VOID_BUFF_CONDITION_BAD.png",
-        "弱体化解除妨害": "state_icon_VOID_BUFF_CONDITION_BAD.png",
-        # === 矢/反射 ===
-        "矢量操作": "state_icon_VECTOR_CONVERSION.png",
-        "强制咏唱待机": "state_icon_SPELL_INTERCEPT.png",
-        "全能神": "state_icon_SPELL_INTERCEPT.png",
-        "预测不能": "state_icon_INVISIBLE_MONSTER.png",
-        "天罚": "state_icon_DIVINE_RETRIBUTION_SPELL.png",
-        # === 攻击方向 ===
-        "攻击方向+": "state_icon_ATTACK_DIR_UP.png",
-        "攻击方向-": "state_icon_ATTACK_DIR_DOWN.png",
-        # === 属性颜色 ===
-        "红": "state_icon_RED_RESIST_UP.png", "绿": "state_icon_GREEN_RESIST_UP.png",
-        "蓝": "state_icon_BLUE_RESIST_UP.png", "黄": "state_icon_YELLOW_RESIST_UP.png",
-        "紫": "state_icon_PURPLE_RESIST_UP.png",
-        # === 回复 ===
-        "HP回复": "state_icon_VOID_HP_HEAL.png",
-        # === 反伤 ===
-        "反射": "state_icon_MIRROR_ATTACK.png",
-        "吸收": "state_icon_DAMAGE_ZERO.png",
-    }
-    # 颜色关键词映射到对应图标
-    _color_resist = {"红":"RED","绿":"GREEN","蓝":"BLUE","黄":"YELLOW","紫":"PURPLE"}
-    for _color, _code in _color_resist.items():
-        icon_map[f"对{_color}色威力提升"] = f"state_icon_TARGET_{_code}_DAMAGE_UP.png"
-        icon_map[f"{_color}色耐性下降"] = f"state_icon_{_code}_RESIST_DOWN.png"
-        icon_map[f"{_color}色耐性提升"] = f"state_icon_{_code}_RESIST_UP.png"
-    
-    for keyword, icon_name in icon_map.items():
+def _get_state_icon(effect_name, is_debuff=False):
+    """根据 buff/debuff 名称获取 state_icon 路径。
+    优先查 battle_system.BUFF_ICON_MAP（单一数据源），找不到再 fallback 本地扩展。
+    """
+    if not effect_name:
+        return None
+
+    # 未传 is_debuff 时根据关键词自动检测
+    if not is_debuff:
+        debuff_keywords = ["下降", "封印", "沉默", "冻结", "昏迷", "流血", "灼烧",
+                           "中毒", "减伤", "妨害", "被害", "感电", "气绝", "不能", "DOWN"]
+        is_debuff = any(kw in effect_name for kw in debuff_keywords)
+
+    suffix = DEBUFF_ICON_SUFFIX if is_debuff else BUFF_ICON_SUFFIX  # _DOWN / _UP
+
+    # ---- 根据名称查找图标 ----
+
+    # 1. 处理复合关键词 (长→短 匹配，避免 "a卡封印" 被 "封印" 误匹配)
+    for keyword in sorted(BUFF_ICON_MAP.keys(), key=len, reverse=True):
         if keyword in effect_name:
-            # 如果是debuff，尝试使用对应的DOWN图标
-            if is_debuff:
-                base_name = icon_name.replace("_UP.png", "_DOWN.png")
-                down_path = STATE_DIR / base_name
-                if down_path.exists():
-                    return str(down_path)
-            
-            icon_path = STATE_DIR / icon_name
-            if icon_path.exists():
-                return str(icon_path)
+            base = BUFF_ICON_MAP[keyword]
+            # 特殊效果（感电/气绝等）没有 UP/DOWN 后缀
+            if base in ("SHOCK", "FAINT", "UNCONTROL", "BLEED", "SEAL", "SILENCE",
+                        "FREEZE", "BURN", "VOID_BUFF_CONDITION_BAD", "VOID_BUFF_CONDITION_GOOD",
+                        "VOID_HP_HEAL", "WORLD_MOVE", "DIVINE_RETRIBUTION_SPELL",
+                        "MIRROR_ATTACK", "VECTOR_CONVERSION", "SPELL_INTERCEPT",
+                        "STATE_RESIST", "DAMAGE_COVER", "GUTS", "PIERCING"):
+                path = STATE_DIR / f"state_icon_{base}.png"
+                if path.exists():
+                    return str(path)
+            # 标准 buff/debuff 带后缀
+            path = STATE_DIR / f"state_icon_{base}{suffix}.png"
+            if path.exists():
+                return str(path)
+            # 后缀文件不存在时尝试无后缀
+            path = STATE_DIR / f"state_icon_{base}.png"
+            if path.exists():
+                return str(path)
+
+    # 2. Fallback: A卡扩展效果 (不在 BUFF_ICON_MAP 中但战斗日志会出现)
+    _extras = {
+        "物攻": "ATK", "异攻": "INT", "物防": "DEF", "异防": "MIND",
+        "冻结": "FREEZE", "昏迷": "FAINT", "沉默": "SILENCE",
+        "流血": "BLEED", "灼烧": "BURN", "中毒": "BLEED",
+        "嘲讽": ("TARGET_RED_DAMAGE", True),  # (base, never use suffix)
+        "全能神": "SPELL_INTERCEPT", "预测不能": "INVISIBLE_MONSTER",
+        "HP回复": "VOID_HP_HEAL", "吸收": "DAMAGE_ZERO",
+    }
+    for keyword, spec in sorted(_extras.items(), key=lambda x: len(x[0]), reverse=True):
+        if keyword in effect_name:
+            if isinstance(spec, tuple):
+                base, no_suffix = spec
+                path = STATE_DIR / f"state_icon_{base}.png"
+            else:
+                # 控制/DoT 类不需要后缀
+                if spec in ("FREEZE", "FAINT", "SILENCE", "BLEED", "BURN",
+                            "VOID_HP_HEAL", "DAMAGE_ZERO", "SPELL_INTERCEPT",
+                            "INVISIBLE_MONSTER"):
+                    path = STATE_DIR / f"state_icon_{spec}.png"
+                else:
+                    path = STATE_DIR / f"state_icon_{spec}{suffix}.png"
+            if path.exists():
+                return str(path)
+            if not path.exists() and not isinstance(spec, tuple):
+                path = STATE_DIR / f"state_icon_{spec}.png"
+                if path.exists():
+                    return str(path)
+
     return None
 
 def _parse_arrow(name):
@@ -361,11 +349,11 @@ def _render_buff_icons(canvas, x, y, buffs, debuffs, max_width):
     if not isinstance(debuffs, list): debuffs = []
     
     for b in buffs[:6]:
-        icon_path = _get_state_icon(b.get("name", ""))
+        icon_path = _get_state_icon(b.get("name", ""), is_debuff=False)
         if icon_path:
             icons.append((icon_path, False))
     for d in debuffs[:6]:
-        icon_path = _get_state_icon(d.get("name", ""))
+        icon_path = _get_state_icon(d.get("name", ""), is_debuff=True)
         if icon_path:
             icons.append((icon_path, True))
     
@@ -553,8 +541,8 @@ def _render_team_section(field_units, hp_changes, attack_directions, is_enemy=Fa
             else:
                 dir_offsets = [0]
 
-            arrow_map_p = {-1: '↙', 0: '↓', 1: '↘'}
-            arrow_map_e = {-1: '↖', 0: '↑', 1: '↗'}
+            arrow_map_p = {-1: '↖', 0: '↑', 1: '↗'}
+            arrow_map_e = {-1: '↙', 0: '↓', 1: '↘'}
             arrow_map = arrow_map_e if is_enemy else arrow_map_p
             dir_text = ''.join(arrow_map.get(o, '?') for o in sorted(dir_offsets))
 
@@ -1342,26 +1330,31 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
         
         elif entry_type == "assist_trigger":
             # A卡效果触发后的帧
-            assist_name = entry.get("assist_name", "")
-            effects = entry.get("effects", [])
-            source_unit = entry.get("source_unit", "")
-            
-            # 构建事件描述
-            source_name = _extract_base_name(source_unit)
-            effect_text = effects[0] if effects else "效果触发"
-            # 简化效果描述
-            if effect_text and '[A]' in effect_text:
-                # 提取效果内容
-                effect_match = re.match(r'(.+?)\s+(.+?)\s+\[A\]', effect_text)
-                if effect_match:
-                    target_char = effect_match.group(1)
-                    effect_content = effect_match.group(2)
-                    event_text = f"{assist_name} → {target_char}: {effect_content}"
-                else:
-                    event_text = f"{assist_name}: {effect_text.replace('[A]', '')}"
+            is_attack_internal = entry.get("is_attack_internal", False)
+
+            if is_attack_internal:
+                # 攻击内触发的A卡效果（自身受到伤害时/使敌方退场时等）
+                target_name = _extract_base_name(entry.get("target_name", ""))
+                effect_desc = entry.get("effect_desc", "效果触发")
+                event_text = f"A卡 → {target_name}: {effect_desc}"
             else:
-                event_text = f"{assist_name}: 效果触发"
-            
+                assist_name = entry.get("assist_name", "")
+                effects = entry.get("effects", [])
+                source_unit = entry.get("source_unit", "")
+
+                source_name = _extract_base_name(source_unit)
+                effect_text = effects[0] if effects else "效果触发"
+                if effect_text and '[A]' in effect_text:
+                    effect_match = re.match(r'(.+?)\s+(.+?)\s+\[A\]', effect_text)
+                    if effect_match:
+                        target_char = effect_match.group(1)
+                        effect_content = effect_match.group(2)
+                        event_text = f"{assist_name} → {target_char}: {effect_content}"
+                    else:
+                        event_text = f"{assist_name}: {effect_text.replace('[A]', '')}"
+                else:
+                    event_text = f"{assist_name}: 效果触发"
+
             # 更新BUFF信息（从player_positions和enemy_positions获取）
             if "player_positions" in entry:
                 for pos_info in entry["player_positions"]:
@@ -1381,8 +1374,43 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
                             u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                             break
-            
+
             save_frame("A卡触发", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+        elif entry_type == "retreat":
+            # 退场帧：标记阵亡单位，清除场上位置
+            retreat_names = []
+            for pos_info in entry.get("player_positions", []):
+                name = pos_info.get("name", "")
+                base_name = _extract_base_name(name)
+                alive = pos_info.get("alive", True)
+                if not alive:
+                    retreat_names.append(base_name)
+                    for u in p_field:
+                        if not u.get("is_empty") and u.get("base_name") == base_name:
+                            u["alive"] = False
+                            u["hp"] = 0
+                            u["buffs"] = []
+                            u["debuffs"] = []
+                            u["position"] = -1
+                            break
+            for pos_info in entry.get("enemy_positions", []):
+                name = pos_info.get("name", "")
+                base_name = _extract_base_name(name)
+                alive = pos_info.get("alive", True)
+                if not alive:
+                    retreat_names.append(base_name)
+                    for u in e_field:
+                        if not u.get("is_empty") and u.get("base_name") == base_name:
+                            u["alive"] = False
+                            u["hp"] = 0
+                            u["buffs"] = []
+                            u["debuffs"] = []
+                            u["position"] = -1
+                            break
+
+            event_text = f"退场: {', '.join(retreat_names)}" if retreat_names else "退场"
+            save_frame("退场", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
         
         elif entry_type == "battle_end":
             winner = entry.get("winner")

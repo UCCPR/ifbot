@@ -3049,7 +3049,8 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         # 记录碎片获得
         red_crystal_gained = 0
         blue_crystal_gained = 0
-        
+        auto_conversion_messages = []  # 3星重复自动转化提示
+
         # 开盲盒
         log_info(f"用户 {user_id} 开启盲盒，共 {len(indices)} 个，索引: {indices}")
         for idx in indices:
@@ -3120,7 +3121,13 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
                     chara_name,
                     limit_type
                 )
-                add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+                collection = add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+                # 自动转化：已有≥6张重复，再抽到同一3星卡→100蓝碎片
+                dup_count = collection.get(card_id, {}).get("count", 0)
+                if dup_count >= 7:
+                    add_blue_crystal(user_id, 100)
+                    blue_crystal_gained += 100
+                    auto_conversion_messages.append(f"🔄 {chara_name} (x{dup_count}) → 100蓝碎片")
             
             # 更新抽卡记录
             got_3star = (stars == 3)
@@ -3188,7 +3195,8 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
             "results": opened_results,
             "mutations": mutation_messages,
             "red_crystal": red_crystal_gained,
-            "blue_crystal": blue_crystal_gained
+            "blue_crystal": blue_crystal_gained,
+            "auto_conversions": auto_conversion_messages
         }
 
         # 检查是否全部开完
@@ -3208,9 +3216,14 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         # 收集FES消息
         fes_messages = [r.get("fes_message") for r in opened_results if r.get("fes_message")]
         fes_text = "\n".join(fes_messages) if fes_messages else ""
-        
+
+        # 自动转化文本
+        auto_conv_text = "\n".join(auto_conversion_messages) if auto_conversion_messages else ""
+        if auto_conv_text:
+            auto_conv_text = "\n" + auto_conv_text
+
         # 合成消息（不显示详细文字信息，只显示图片和简短提示）
-        short_text = f"开了{len(new_opened)}个！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看详情"
+        short_text = f"开了{len(new_opened)}个！{fes_text}{auto_conv_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看详情"
 
         # 合成一条消息发送
         if img_path:
@@ -3523,7 +3536,10 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
                                 except:
                                     font = ImageFont.load_default()
                                 text = f"x{count}"
-                                text_w, text_h = draw.textsize(text, font=font)
+                                # Pillow >=10.0.0 移除了 textsize，用 textbbox 替代
+                                bbox = draw.textbbox((0, 0), text, font=font)
+                                text_w = bbox[2] - bbox[0]
+                                text_h = bbox[3] - bbox[1]
                                 text_x = badge_x + (badge_w - text_w) // 2
                                 text_y = badge_y + (badge_h - text_h) // 2
                                 draw.text((text_x, text_y), text, fill=(255, 255, 255), font=font)
@@ -3593,6 +3609,7 @@ def handle_show_details(user_id: str, group_id):
         mutations = last_results.get("mutations", [])
         red_crystal = last_results.get("red_crystal", 0)
         blue_crystal = last_results.get("blue_crystal", 0)
+        auto_conversions = last_results.get("auto_conversions", [])
 
         # 构建详细结果
         stars_display = {1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐"}
@@ -3622,6 +3639,9 @@ def handle_show_details(user_id: str, group_id):
             if blue_crystal > 0:
                 crystal_parts.append(f"🔵蓝色碎片 x{blue_crystal}")
             msg_parts.append(f"\n本次获得: {' + '.join(crystal_parts)}")
+
+        if auto_conversions:
+            msg_parts.append(f"\n🔄 重复转化:\n" + "\n".join(auto_conversions))
 
         complete_text = "\n".join(msg_parts)
 

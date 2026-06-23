@@ -29,13 +29,20 @@
   cd /home/root/zmdbot
   sudo bash setup_services.sh
 
-安装后Bot崩溃自动重启。
+安装后Bot崩溃自动重启。图片服务由Bot内置启动（端口18080），无需单独服务。
 
 管理命令:
   systemctl status qqbot              # 查看状态
   journalctl -u qqbot -f              # 实时日志
   systemctl restart qqbot             # 重启
   systemctl stop qqbot                # 停止
+
+  # 隧道独立管理
+  systemctl status qqbot-tunnel       # 隧道状态
+  journalctl -u qqbot-tunnel -f       # 隧道日志
+
+  一键状态检查:
+  bash status.sh                      # 查看进程/PID锁/端口/隧道全貌
 
 隧道地址变化时更新:
   journalctl -u qqbot-tunnel -n 5 | grep trycloudflare
@@ -78,16 +85,40 @@ GACHA10_COST = 3000
 ... (其余保持不变)
 
 
-五、已实现命令
+五、玩家命令
 ============================================
 
 签到  获取呱太  十连  单抽  限定十连
 战斗  对战  BOSS战  挑战 1~10
-战斗日志  战斗GIF
+战斗日志  战斗GIF  gif列表
 排行榜  抽卡排行  个人记录
 队伍  队伍我的卡  队伍设置  队伍切换
 队伍自动配队  防守队
 兑换呱太  红抽  蓝抽  三王女
 昵称  绑定QQ号
-管理员: @用户 呱太/蓝碎片/红碎片 数量
-管理员: 全榜替 OpenID QQ号
+help  帮助  可爱  卖萌
+
+
+六、管理员命令 (仅 config.py 中 ADMIN_ID 可使用)
+============================================
+
+所有管理员命令必须在群聊中 @Bot 使用，格式为:
+  @Bot <命令> @目标用户
+
+1. 增减呱太
+   @Bot 100呱太 @某人          → 增加 100 呱太
+   @Bot 扣100呱太 @某人         → 扣除 100 呱太（余额不足则失败）
+   @Bot 减100呱太 @某人         → 同上
+
+2. 增减蓝碎片
+   @Bot 50蓝碎片 @某人          → 增加 50 蓝碎片
+   @Bot 扣50蓝碎片 @某人         → 扣除 50 蓝碎片
+
+3. 增减红碎片
+   @Bot 30红碎片 @某人          → 增加 30 红碎片
+   @Bot 扣30红碎片 @某人         → 扣除 30 红碎片
+
+4. 全榜替（排行榜迁移旧QQ号→新openid）
+   @Bot 全榜替 <新openid> <旧QQ号>
+   例: @Bot 全榜替 A1B2C3D4E5 123456789
+   → 排行榜中所有 user_id=123456789 的条目改为 A1B2C3D4E5

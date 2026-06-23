@@ -5,6 +5,7 @@
 """
 
 import os
+import sys
 import random
 import json
 import asyncio
@@ -13,8 +14,8 @@ import uuid
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+import atexit
 
-import requests
 from PIL import Image
 import openpyxl
 
@@ -85,7 +86,7 @@ except ImportError as e:
     _GIF_COOLDOWN = {}  # GIF生成冷却 {user_id: timestamp}
     class BattleSystem:
         def __init__(self, data): pass
-        def start_battle(self, p_team, e_team, challenger="player", initial_player_sp=0, extra_characters=None): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
+        def start_battle(self, p_team, e_team, challenger="player", initial_player_sp=0, extra_characters=None, max_rounds=12): return {"winner": "player", "rounds": 1, "log": [], "player_units": [], "enemy_units": []}
         def start_boss_battle(self, player_team, boss_card_id, initial_sp=300, extra_characters=None): return {"boss_name": "???", "boss_starting_hp": 15000000, "boss_ending_hp": 15000000, "damage_dealt": 0, "damage_percent": 0, "rounds": 0, "player_survived": 0, "player_total": 0, "boss_killed": False, "log": [], "player_units": [], "enemy_units": []}
         def get_character(self, card_id): return None
         def _get_fallback_character(self, card_id): return None
@@ -109,14 +110,33 @@ INFO_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR.mkdir(exist_ok=True)
 
+# 强制 stdout 使用 UTF-8，避免 Windows GBK 控制台下 emoji 等字符抛出 UnicodeEncodeError
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # ========== 日志模块（必须在其他模块之前定义）==========
+def _safe_print(prefix: str, message: str):
+    """安全打印，防止 Windows GBK 控制台因 emoji 等字符抛出 UnicodeEncodeError"""
+    try:
+        print(f"[{prefix}] {message}", flush=True)
+    except UnicodeEncodeError:
+        # Windows GBK 控制台无法编码 emoji，用 ASCII 安全方式输出
+        safe_msg = message.encode("ascii", errors="replace").decode("ascii")
+        try:
+            print(f"[{prefix}] {safe_msg}", flush=True)
+        except Exception:
+            pass  # 最后的兜底，放弃控制台输出
+
+
 def log_info(message: str):
     """记录普通信息"""
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_info.log"
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
-    print(f"[INFO] {message}", flush=True)
+    _safe_print("INFO", message)
 
 
 def log_error(message: str):
@@ -125,7 +145,7 @@ def log_error(message: str):
     log_file = INFO_DIR / "gacha_error.log"
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] ERR {message}\n")
-    print(f"[ERROR] {message}", flush=True)
+    _safe_print("ERROR", message)
 
 
 # ========== 抽卡记录备份模块 ==========
@@ -144,8 +164,7 @@ def get_last_backup_date() -> str:
 
 def set_last_backup_date(date_str: str):
     """设置最后一次备份的日期"""
-    with open(BACKUP_RECORD_FILE, "w", encoding="utf-8") as f:
-        json.dump({"last_backup_date": date_str}, f)
+    _atomic_json_save(BACKUP_RECORD_FILE, {"last_backup_date": date_str})
 
 def backup_pity_records():
     """备份所有抽卡记录（每天第一次启动时执行）"""
@@ -200,7 +219,15 @@ def backup_pity_records():
             with open(ranking_file, "rb") as src:
                 with open(dest_file, "wb") as dst:
                     dst.write(src.read())
-        
+
+        # 备份 dau_log.json（日活记录）
+        dau_file = INFO_DIR / "dau_log.json"
+        if dau_file.exists():
+            dest_file = today_backup_dir / dau_file.name
+            with open(dau_file, "rb") as src:
+                with open(dest_file, "wb") as dst:
+                    dst.write(src.read())
+
         # 备份 team_*.json 文件（队伍配置）
         team_files = list(INFO_DIR.glob("team_*.json"))
         for team_file in team_files:
@@ -215,8 +242,9 @@ def backup_pity_records():
         total_files = len(pity_files) + len(gacha_files) + len(signin_files) + len(team_files)
         if fes_stats.exists(): total_files += 1
         if ranking_file.exists(): total_files += 1
-        
-        log_info(f"抽卡记录备份完成！日期: {today}, 文件数: {total_files}")
+        if dau_file.exists(): total_files += 1
+
+        log_info(f"数据备份完成！日期: {today}, 文件数: {total_files}")
         return True
         
     except Exception as e:
@@ -272,7 +300,9 @@ try:
         # 管理员
         ADMIN_QQ,
         # BOSS战
-        BOSS_BATTLE_COOLDOWN_SECONDS
+        BOSS_BATTLE_COOLDOWN_SECONDS,
+        # CDKEY
+        CDKEYS
     )
 except ImportError:
     # 如果配置文件不存在，使用默认值
@@ -320,6 +350,8 @@ except ImportError:
     # BOSS战
     BOSS_BATTLE_COOLDOWN_SECONDS = 60
     ADMIN_QQ = ""  # 管理员QQ
+    # CDKEY
+    CDKEYS = {}
 
 # 定义概率权重常量（避免代码重复）
 GACHA_WEIGHTS = [GACHA_1STAR_PROB, GACHA_2STAR_PROB, GACHA_3STAR_PROB]
@@ -334,12 +366,10 @@ CROP_BOTTOM_RATIO = 0.65
 
 BOT_API: BotAPI = None  # botpy API句柄，连接后设置
 # IMAGE_HOST 从 config.py 导入，此处不覆盖
-# 兼容 Flask jsonify（botpy 版无需HTTP响应，保留空函数避免报错）
+# 兼容 Flask jsonify（botpy WebSocket 版无条件返回 None，所有消息通过 send_message 发送）
 def jsonify(obj=None, **kwargs):
-    """兼容 Flask jsonify，实际消息已通过 send_message 发送"""
-    if obj is None and kwargs:
-        obj = kwargs
-    return obj or {}
+    """[DEPRECATED] 所有消息已通过 send_message 主动发送，返回 None 避免 botpy 重复回复"""
+    return None
 
 
 # ========== 全局变量 ==========
@@ -433,9 +463,7 @@ def get_default_pity_data() -> dict:
 
 def save_pity_data(user_id: str, data: dict):
     """保存用户的抽卡记录数据"""
-    pity_file = get_pity_file(user_id)
-    with open(pity_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _atomic_json_save(get_pity_file(user_id), data)
 
 
 def get_remaining_pity(user_id: str) -> int:
@@ -706,8 +734,7 @@ def load_fes_stats() -> dict:
 
 def save_fes_stats(stats: dict):
     """保存全服FES角色获取统计"""
-    with open(FES_STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=2, ensure_ascii=False)
+    _atomic_json_save(FES_STATS_FILE, stats)
 
 def get_fes_count(card_id: str) -> int:
     """获取某个FES角色的全服获取次数"""
@@ -813,11 +840,27 @@ def load_gacha_data(user_id: str) -> dict:
     return {"gacha": 0}
 
 
+def _atomic_json_save(file_path: Path, data: dict):
+    """原子写入 JSON：先写临时文件再 rename，防止崩溃损坏数据"""
+    import tempfile
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            suffix='.json', prefix='tmp_', dir=str(file_path.parent))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, file_path)
+        except:
+            os.unlink(tmp_path)
+            raise
+    except OSError:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
 def save_gacha_data(user_id: str, data: dict):
     """保存用户的呱太数据"""
-    gacha_file = get_gacha_file(user_id)
-    with open(gacha_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _atomic_json_save(get_gacha_file(user_id), data)
 
 
 def get_gacha_count(user_id: str) -> int:
@@ -865,9 +908,7 @@ def load_signin_data(user_id: str) -> dict:
 
 def save_signin_data(user_id: str, data: dict):
     """保存用户的签到数据"""
-    signin_file = get_signin_file(user_id)
-    with open(signin_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _atomic_json_save(get_signin_file(user_id), data)
 
 
 def can_signin(user_id: str) -> bool:
@@ -1428,9 +1469,23 @@ def save_daily_stats():
     today_sends = max(DAILY_SEND_STATS.get(today, 0), data.get(today, {}).get("send", 0) if isinstance(data.get(today), dict) else 0)
     data[today] = {"dau": today_dau, "send": today_sends}
 
-    # 保存
-    with open(dau_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    # 保存（写前备份，保留最近 7 天）
+    if dau_file.exists():
+        try:
+            import shutil
+            backup_dir = BACKUP_DIR / "dau"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_path = backup_dir / f"dau_log_{today}.json"
+            if not backup_path.exists():
+                shutil.copy2(dau_file, backup_path)
+            # 清理 7 天前的旧备份
+            cutoff = datetime.now().timestamp() - 7 * 86400
+            for old in backup_dir.glob("dau_log_*.json"):
+                if old.stat().st_mtime < cutoff:
+                    old.unlink()
+        except Exception:
+            pass
+    _atomic_json_save(dau_file, data)
 
 
 def record_daily_dau():
@@ -1518,6 +1573,17 @@ def filter_sensitive_words(message: str) -> str:
 
 
 # ========== 消息速率限制模块 ==========
+_RATE_CLEANUP_COUNTER = 0  # 定期清理计数器
+
+def _cleanup_rate_limits():
+    """清理超过2分钟的过期速率计数器，防止内存泄漏"""
+    now = datetime.now().timestamp()
+    stale = [tid for tid, c in MESSAGE_COUNTER.items() if now - c["start_time"] >= 120]
+    for tid in stale:
+        del MESSAGE_COUNTER[tid]
+    if stale:
+        log_info(f"速率限制清理: 移除 {len(stale)} 个过期条目")
+
 def check_message_rate(target_id: str) -> bool:
     """
     检查消息发送速率是否超过限制
@@ -1550,34 +1616,23 @@ def check_message_rate(target_id: str) -> bool:
 
 # ========== botpy 消息发送模块 ==========
 
-def _upload_file(target_id: str, file_bytes: bytes, file_type: int = 1, is_group: bool = True) -> dict:
-    """上传文件到QQ，返回 {file_uuid, file_info, ttl}"""
-    global BOT_API
-    try:
-        # 优先用 botpy 的 access_token，回退到 config 的 Token
-        token = QQ_BOT_TOKEN
-        if BOT_API and hasattr(BOT_API, '_http'):
-            http = BOT_API._http
-            if hasattr(http, '_token') and http._token:
-                token = http._token.access_token or token
-
-        url = f"https://api.sgroup.qq.com/v2/groups/{target_id}/files" if is_group else \
-              f"https://api.sgroup.qq.com/v2/users/{target_id}/files"
-        headers = {"Authorization": f"QQBot {token}"}
-        files = {"file": ("image.png", BytesIO(file_bytes), "image/png")}
-        data = {"file_type": str(file_type)}
-        resp = requests.post(url, headers=headers, files=files, data=data, timeout=30)
-        if resp.status_code == 200:
-            result = resp.json()
-            if result.get("code") == 0:
-                file_data = result.get("data", {}) or result.get("file_info", {})
-                log_info(f"文件上传成功: uuid={file_data.get('file_uuid','')[:16]}...")
-                return file_data
-        log_error(f"文件上传失败: {resp.status_code} {resp.text[:200]}")
-    except Exception as e:
-        log_error(f"文件上传异常: {e}")
-    return {}
-
+def _cleanup_temp_images():
+    """清理 static_images/ 中的过期临时文件（启动和退出时调用）"""
+    import time as _time
+    img_dir = BASE_DIR / "static_images"
+    if not img_dir.exists():
+        return
+    now = _time.time()
+    count = 0
+    for f in img_dir.glob("bot_*.png"):
+        try:
+            if now - f.stat().st_mtime > 600:
+                f.unlink()
+                count += 1
+        except OSError:
+            pass
+    if count:
+        log_info(f"清理过期临时文件: {count} 个")
 
 def _start_image_server():
     """启动内置HTTP文件服务（后台线程，端口18080）"""
@@ -1586,10 +1641,21 @@ def _start_image_server():
     img_dir.mkdir(exist_ok=True)
     def _serve():
         os.chdir(str(img_dir))
-        with http.server.HTTPServer(("0.0.0.0", 18080), http.server.SimpleHTTPRequestHandler) as h:
-            h.serve_forever()
+        import socket
+        class ReuseHTTPServer(http.server.HTTPServer):
+            allow_reuse_address = True
+            def server_bind(self):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                super().server_bind()
+        try:
+            with ReuseHTTPServer(("0.0.0.0", 18080), http.server.SimpleHTTPRequestHandler) as h:
+                log_info("图片HTTP: 0.0.0.0:18080 \u2713")
+                h.serve_forever()
+        except OSError as e:
+            log_error(f"图片HTTP启动失败(端口18080被占用): {e}")
+        except Exception as e:
+            log_error(f"图片HTTP服务异常: {e}")
     threading.Thread(target=_serve, daemon=True).start()
-    log_info("图片HTTP: 0.0.0.0:18080")
 
 
 async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str = "", is_group: bool = True, msg_id: str = ""):
@@ -1603,25 +1669,58 @@ async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str
     with open(fpath, "wb") as f:
         f.write(file_bytes)
 
-    host = IMAGE_HOST or "localhost"
+    # 动态读取 IMAGE_HOST，支持运行时更新无需重启
+    img_host = ""
+    try:
+        with open(BASE_DIR / "config.py", "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _m = _re.search(r'IMAGE_HOST\s*=\s*"([^"]*)"', _line)
+                if _m:
+                    img_host = _m.group(1)
+                    break
+    except:
+        pass
+    img_host = img_host or IMAGE_HOST or "localhost"
+    host = img_host.replace("https://", "").replace("http://", "").rstrip("/")
     image_url = f"https://{host}/{fname}"
     log_info(f"图片URL: {image_url}, 文件大小: {os.path.getsize(fpath)} bytes")
 
     try:
-        media_resp = await BOT_API.post_group_file(group_openid=target_id, file_type=1, url=image_url)
+        from botpy.types.message import Media
+
+        if is_group:
+            media_resp = await BOT_API.post_group_file(group_openid=target_id, file_type=1, url=image_url)
+        else:
+            media_resp = await BOT_API.post_c2c_file(openid=target_id, file_type=1, url=image_url)
         if not media_resp:
             log_error("QQ上传返回空")
             return
         log_info(f"QQ上传成功: uuid={media_resp.get('file_uuid','?')[:20]}...")
 
-        from botpy.types.message import Media
         media = Media(file_uuid=media_resp.get("file_uuid",""), file_info=media_resp.get("file_info",""), ttl=media_resp.get("ttl",0))
         content_clean = filter_sensitive_words(_re.sub(r'<@[A-F0-9]+>', '', content or '').strip())
-        result = await BOT_API.post_group_message(
-            group_openid=target_id, content=content_clean,
-            msg_type=7, msg_id=msg_id, media=media
-        )
-        log_info(f"消息发送成功: id={getattr(result, 'id', '?')}")
+        for attempt in range(3):
+            import time as _time2
+            try:
+                if is_group:
+                    result = await BOT_API.post_group_message(
+                        group_openid=target_id, content=content_clean,
+                        msg_type=7, msg_id=msg_id, media=media
+                    )
+                else:
+                    result = await _c2c_send_raw(
+                        openid=target_id, content=content_clean,
+                        msg_type=7, msg_id=msg_id, media=media
+                    )
+                log_info(f"消息发送成功: id={getattr(result, 'id', '?')}")
+                break
+            except Exception as send_err:
+                err_msg = str(send_err)
+                if 'msgseq' in err_msg.lower() or '去重' in err_msg:
+                    if attempt < 2:
+                        await asyncio.sleep(0.5 + attempt * 0.3)
+                        continue
+                raise send_err
     except Exception as e:
         log_error(f"图片发送失败: {e}")
     finally:
@@ -1629,6 +1728,20 @@ async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str
         await asyncio.sleep(5)
         try: os.remove(fpath)
         except: pass
+async def _c2c_send_raw(openid: str, content: str = "", msg_type: int = 0, msg_id: str = None, media=None):
+    """绕过 botpy post_c2c_message 的 msg_seq bug，直接构建干净请求"""
+    from botpy.http import Route
+    payload = {"openid": openid, "msg_type": msg_type}
+    if content:
+        payload["content"] = content
+    if msg_id:
+        payload["msg_id"] = msg_id
+    if media is not None:
+        payload["media"] = dict(media)  # Media 是 TypedDict，直接转 dict
+    route = Route("POST", "/v2/users/{openid}/messages", openid=openid)
+    return await BOT_API._http.request(route, json=payload)
+
+
 def _bot_send(target_id: str, content: str = "", file_image: bytes = None, is_group: bool = True) -> bool:
     """通过 botpy API 发送被动回复"""
     global BOT_API, _CURRENT_MSG_ID
@@ -1638,20 +1751,19 @@ def _bot_send(target_id: str, content: str = "", file_image: bytes = None, is_gr
         content = _re.sub(r'<@[A-F0-9]+>', '', content or '').strip()
         content = filter_sensitive_words(content)
 
-        # 有图片：保存本地 → 公网URL → 上传QQ → media发送
-        if file_image and is_group:
+        # 有图片：保存本地 → 公网URL → 上传QQ → media发送（群聊/C2C均支持）
+        if file_image:
             coro = _upload_and_send_image(target_id, file_image, content=content,
-                                          is_group=True, msg_id=_CURRENT_MSG_ID)
+                                          is_group=is_group, msg_id=_CURRENT_MSG_ID)
         elif is_group:
             coro = BOT_API.post_group_message(
                 group_openid=target_id, content=content, msg_type=0,
                 msg_id=_CURRENT_MSG_ID
             )
         else:
-            coro = BOT_API.post_c2c_message(
-                openid=target_id, content=content, msg_type=0,
-                msg_id=_CURRENT_MSG_ID
-            )
+            # 绕过 botpy post_c2c_message 的 msg_seq bug，直接发干净请求
+            coro = _c2c_send_raw(openid=target_id, content=content, msg_type=0,
+                                 msg_id=_CURRENT_MSG_ID)
 
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -2396,7 +2508,8 @@ def _save_nicknames(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_nickname(uid: str) -> str:
-    nick = _load_nicknames().get(str(uid), "")
+    uid = str(uid)  # 兼容整数型 user_id
+    nick = _load_nicknames().get(uid, "")
     return nick if nick else uid[:8]  # 未设置昵称显示ID前8位
 
 def _handle_nickname(user_id: str, group_id: str, raw_message: str):
@@ -2423,6 +2536,12 @@ class QQBotClient(Client):
         BOT_API = self.api
         log_info(f"Bot已连接! AppID={QQ_BOT_APP_ID}")
 
+        # 启动时检查是否有未结算的排行榜奖励
+        result = settle_ranking_rewards()
+        if result and result.get("rewards"):
+            names = ", ".join(f"#{r['rank']} {r['nickname']}" for r in result["rewards"])
+            log_info(f"启动补结算: {result['date']} → {names}")
+
     async def on_group_at_message_create(self, message: GroupMessage):
         """群聊@消息"""
         await self._route(message)
@@ -2433,6 +2552,19 @@ class QQBotClient(Client):
 
     async def _route(self, message):
         """统一消息路由（复用原有所有命令处理逻辑）"""
+        try:
+            await self._route_impl(message)
+        except Exception as e:
+            import traceback
+            log_error(f"消息路由异常: {e}\n{traceback.format_exc()}")
+            try:
+                raw = (getattr(message, 'content', '') or '').strip()[:80]
+                log_error(f"崩溃消息预览: {raw}")
+            except:
+                pass
+
+    async def _route_impl(self, message):
+        """消息路由实现（由 _route 的 try/except 保护）"""
         global BOT_API
         BOT_API = self.api
 
@@ -2447,20 +2579,26 @@ class QQBotClient(Client):
         if not cleaned_message and not raw_mentions:
             return
 
+        # 定期清理过期的速率限制条目（每100条消息触发一次）
+        global _RATE_CLEANUP_COUNTER
+        _RATE_CLEANUP_COUNTER += 1
+        if _RATE_CLEANUP_COUNTER % 100 == 0:
+            _cleanup_rate_limits()
+
         # 判断消息类型，设置全局标志（供 send_message 使用）
         global _MSG_IS_GROUP, _CURRENT_MSG_ID, _CURRENT_MESSAGE
         _MSG_IS_GROUP = hasattr(message, 'group_openid')
         _CURRENT_MSG_ID = getattr(message, 'id', '')
         _CURRENT_MESSAGE = message
 
-        # 提取用户ID（群聊 author 是 Member 对象，用 member_openid）
+        # 提取用户ID（群聊 author 有 member_openid，私聊 author 有 user_openid）
         author = getattr(message, 'author', None)
         if author is None:
             user_id = 'unknown'
         elif isinstance(author, dict):
-            user_id = str(author.get('member_openid') or author.get('id', 'unknown'))
+            user_id = str(author.get('member_openid') or author.get('user_openid') or author.get('id', 'unknown'))
         else:
-            user_id = str(getattr(author, 'member_openid', None) or getattr(author, 'id', 'unknown'))
+            user_id = str(getattr(author, 'member_openid', None) or getattr(author, 'user_openid', None) or getattr(author, 'id', 'unknown'))
 
         # 目标ID: 群聊用 group_openid，私聊用 user_id
         target_id = str(getattr(message, 'group_openid', '') or user_id or '')
@@ -2475,6 +2613,14 @@ class QQBotClient(Client):
             DAILY_USER_SET.add(str(user_id))
         save_daily_stats()
 
+        # 检查排行榜每日结算（每天最多一次，12:00触发）
+        settlement = settle_ranking_rewards()
+        if settlement and settlement.get("rewards"):
+            lines = [f"🏆 排行榜每日结算 ({settlement['date']})"]
+            for r in settlement["rewards"]:
+                lines.append(f"  {['','🥇','🥈','🥉'][r['rank']]} 第{r['rank']}名: {r['nickname']} +{r['amount']}呱太")
+            send_message("\n".join(lines), user_id, group_id)
+
         self_id = str(QQ_BOT_APP_ID)
 
         # 盲盒会话
@@ -2486,12 +2632,21 @@ class QQBotClient(Client):
             if s.isdigit(): has_input = True
             elif _re.search(r'选择[0-9]+', cleaned_message): has_input = True
             elif _re.search(r'[0-9]+', cleaned_message): has_input = True
-            if is_open or has_input:
+            # 允许放弃旧盲盒：取消 / 新抽卡覆盖
+            abandon_commands = ['取消', '不要了', '放弃']
+            is_abandon = any(cmd in cleaned_message for cmd in abandon_commands)
+            is_new_gacha = cleaned_message.lstrip('/').startswith('十连') or cleaned_message.lstrip('/').startswith('单抽') or cleaned_message.lstrip('/').startswith('限定十连')
+            if is_abandon or is_new_gacha:
+                clear_box_session(user_id)
+                if is_abandon:
+                    send_message("盲盒已取消，呱太不退还~", user_id, group_id)
+                    return
+            elif is_open or has_input:
                 return handle_box_open(user_id, group_id, cleaned_message)
             else:
                 session = get_box_session(user_id)
                 remaining = max(0, len(session["boxes"]) - len(session["opened"]))
-                reply = f"你还有{remaining}个未开！请输入要开的编号（如1、选择1）或「全部开」"
+                reply = f"你还有{remaining}个未开！请输入要开的编号（如1、选择1）或「全部开」\n输入「取消」放弃本次盲盒"
                 send_message(reply, user_id, group_id)
                 return
 
@@ -2560,8 +2715,15 @@ class QQBotClient(Client):
         elif '战斗日志' in cmd:
             return handle_battle_log(user_id, group_id, gen_gif=False)
         elif cmd.startswith('战斗') or cmd.startswith('对战'):
-            return handle_battle(user_id, group_id, cmd)
+            return handle_battle(user_id, group_id, cmd, raw_mentions)
         elif cmd.startswith('挑战'):
+            target_mention = None
+            for mid in raw_mentions:
+                if mid != str(QQ_BOT_APP_ID):
+                    target_mention = mid
+                    break
+            if target_mention:
+                return challenge_player(user_id, group_id, target_mention)
             m = _re.search(r'挑战\s*(\d+)', cmd)
             target_rank = int(m.group(1)) if m else None
             return challenge_rank(user_id, group_id, target_rank)
@@ -2577,7 +2739,19 @@ class QQBotClient(Client):
             send_message(f"当前呱太: {get_gacha_count(user_id)}", user_id, group_id)
         elif cmd.startswith('限定十连'):
             return handle_limited_gacha(user_id, group_id)
-        elif cmd.startswith('兑换呱太') or cmd.startswith('兑换'):
+        elif cmd.startswith('兑换'):
+            # 兑换 ZMDBOT2026 → CDKEY 兑换（大写字母+数字串）
+            import re
+            key_match = re.match(r'兑换\s*([A-Z0-9]{4,})\s*$', cmd)
+            if key_match:
+                return handle_cdkey_redeem(user_id, group_id, key_match.group(1))
+            # 兑换红碎片 / 兑换红 → 仅兑红色碎片
+            if '红' in cmd:
+                return handle_exchange_crystal(user_id, group_id, crystal_type="red")
+            # 兑换蓝碎片 / 兑换蓝 → 仅兑蓝色碎片
+            if '蓝' in cmd:
+                return handle_exchange_crystal(user_id, group_id, crystal_type="blue")
+            # 兑换 / 兑换呱太 → 兑全部碎片
             return handle_exchange_crystal(user_id, group_id)
         elif '抽卡排行' in cmd or cmd.startswith('呱太排行'):
             return handle_gacha_leaderboard(user_id, group_id)
@@ -2825,7 +2999,7 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
 
     except Exception as e:
         log_error(f"抽卡处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_limited_gacha(user_id: str, group_id):
@@ -2994,7 +3168,7 @@ def handle_limited_gacha(user_id: str, group_id):
 
     except Exception as e:
         log_error(f"限定池处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_sannoujo(user_id: str, group_id):
@@ -3113,7 +3287,7 @@ def handle_sannoujo(user_id: str, group_id):
     
     except Exception as e:
         log_error(f"三王女命令失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_box_open(user_id: str, group_id: str, open_input: str):
@@ -3155,7 +3329,8 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         # 记录碎片获得
         red_crystal_gained = 0
         blue_crystal_gained = 0
-        
+        auto_conversion_messages = []  # 3星重复自动转化提示
+
         # 开盲盒
         log_info(f"用户 {user_id} 开启盲盒，共 {len(indices)} 个，索引: {indices}")
         for idx in indices:
@@ -3226,7 +3401,14 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
                     chara_name,
                     limit_type
                 )
-                add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+                collection = add_card_collection(user_id, card_id, chara_name, stars, limit_type)
+                # 自动转化：已有≥6张重复，再抽到同一3星卡→100蓝碎片
+                dup_count = collection.get(card_id, {}).get("count", 0)
+                if dup_count >= 7:
+                    add_blue_crystal(user_id, 100)
+                    blue_crystal_gained += 100
+                    auto_conversion_messages.append(f"🔄 {chara_name} (x{dup_count}) → 100蓝碎片")
+                    log_info(f"用户 {user_id} 3星重复自动转化: {chara_name} x{dup_count} → +100蓝碎片")
             
             # 更新抽卡记录
             got_3star = (stars == 3)
@@ -3294,7 +3476,8 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
             "results": opened_results,
             "mutations": mutation_messages,
             "red_crystal": red_crystal_gained,
-            "blue_crystal": blue_crystal_gained
+            "blue_crystal": blue_crystal_gained,
+            "auto_conversions": auto_conversion_messages
         }
 
         # 检查是否全部开完
@@ -3314,9 +3497,14 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         # 收集FES消息
         fes_messages = [r.get("fes_message") for r in opened_results if r.get("fes_message")]
         fes_text = "\n".join(fes_messages) if fes_messages else ""
-        
+
+        # 自动转化文本
+        auto_conv_text = "\n".join(auto_conversion_messages) if auto_conversion_messages else ""
+        if auto_conv_text:
+            auto_conv_text = "\n" + auto_conv_text
+
         # 合成消息（不显示详细文字信息，只显示图片和简短提示）
-        short_text = f"开了{len(new_opened)}个！{fes_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看详情"
+        short_text = f"开了{len(new_opened)}个！{fes_text}{auto_conv_text}{crystal_summary}{remaining_hint}\n输入「详细信息」查看详情"
 
         # 合成一条消息发送
         if img_path:
@@ -3341,7 +3529,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
 
     except Exception as e:
         log_error(f"开箱处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_get_gacha(user_id: str, group_id):
@@ -3388,7 +3576,7 @@ def handle_get_gacha(user_id: str, group_id):
     
     except Exception as e:
         log_error(f"获取呱太处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_signin(user_id: str, group_id):
@@ -3429,7 +3617,7 @@ def handle_signin(user_id: str, group_id):
     
     except Exception as e:
         log_error(f"签到处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_personal_info(user_id: str, group_id, page_action: str = None):
@@ -3509,9 +3697,21 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
             f"红碎片 x{red_crystal} → {exchange_red} 呱太\n"
             f"蓝碎片 x{blue_crystal} → {exchange_blue} 呱太\n"
             f"总计可兑换: {total_exchange} 呱太\n"
-            f"输入「兑换呱太」即可兑换"
+            f"输入「兑换」全部兑换 |「兑换红碎片」仅兑红 |「兑换蓝碎片」仅兑蓝"
         )
         
+        # 排行榜奖励历史
+        rewards_data = load_ranking_rewards()
+        player_rewards = rewards_data.get("players", {}).get(user_id)
+        if player_rewards and any(player_rewards.values()):
+            info_text += f"\n\n🏆 排行榜奖励历史:"
+            if player_rewards.get("first", 0) > 0:
+                info_text += f"\n🥇 第1名: {player_rewards['first']}次"
+            if player_rewards.get("second", 0) > 0:
+                info_text += f"\n🥈 第2名: {player_rewards['second']}次"
+            if player_rewards.get("third", 0) > 0:
+                info_text += f"\n🥉 第3名: {player_rewards['third']}次"
+
         # 构建三星卡列表（带计数）
         img_path = None
         if three_star_cards:
@@ -3625,7 +3825,10 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
                                 except:
                                     font = ImageFont.load_default()
                                 text = f"x{count}"
-                                text_w, text_h = draw.textsize(text, font=font)
+                                # Pillow >=10.0.0 移除了 textsize，用 textbbox 替代
+                                bbox = draw.textbbox((0, 0), text, font=font)
+                                text_w = bbox[2] - bbox[0]
+                                text_h = bbox[3] - bbox[1]
                                 text_x = badge_x + (badge_w - text_w) // 2
                                 text_y = badge_y + (badge_h - text_h) // 2
                                 draw.text((text_x, text_y), text, fill=(255, 255, 255), font=font)
@@ -3672,7 +3875,7 @@ def handle_personal_info(user_id: str, group_id, page_action: str = None):
     
     except Exception as e:
         log_error(f"查询个人记录失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return None  # 消息已通过 send_message 发送，返回 None 避免 botpy 重复回复
 
 
 def handle_show_details(user_id: str, group_id):
@@ -3691,6 +3894,7 @@ def handle_show_details(user_id: str, group_id):
         mutations = last_results.get("mutations", [])
         red_crystal = last_results.get("red_crystal", 0)
         blue_crystal = last_results.get("blue_crystal", 0)
+        auto_conversions = last_results.get("auto_conversions", [])
 
         # 构建详细结果
         stars_display = {1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐"}
@@ -3721,6 +3925,9 @@ def handle_show_details(user_id: str, group_id):
                 crystal_parts.append(f"🔵蓝色碎片 x{blue_crystal}")
             msg_parts.append(f"\n本次获得: {' + '.join(crystal_parts)}")
 
+        if auto_conversions:
+            msg_parts.append(f"\n🔄 重复转化:\n" + "\n".join(auto_conversions))
+
         complete_text = "\n".join(msg_parts)
 
         # 发送消息
@@ -3743,7 +3950,7 @@ def handle_show_details(user_id: str, group_id):
 
     except Exception as e:
         log_error(f"查询详细信息失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_leaderboard(user_id: str, group_id):
@@ -3796,7 +4003,7 @@ def handle_leaderboard(user_id: str, group_id):
     
     except Exception as e:
         log_error(f"查询排行榜失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_gacha_leaderboard(user_id: str, group_id):
@@ -3848,66 +4055,221 @@ def handle_gacha_leaderboard(user_id: str, group_id):
 
     except Exception as e:
         log_error(f"查询抽卡榜单失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
-def handle_exchange_crystal(user_id: str, group_id):
-    """处理碎片兑换呱太请求"""
+def handle_exchange_crystal(user_id: str, group_id, crystal_type: str = None):
+    """处理碎片兑换呱太请求
+    :param crystal_type: None=全部, "red"=仅红碎片, "blue"=仅蓝碎片
+    """
     try:
         # 获取用户碎片数量
         red_crystal = get_red_crystal(user_id)
         blue_crystal = get_blue_crystal(user_id)
-        
-        if red_crystal == 0 and blue_crystal == 0:
-            reply = "你没有可以兑换的碎片！"
-            if group_id and user_id:
-                reply = f"<@{user_id}> {reply}"
-            send_message(reply, user_id, group_id)
-            return jsonify({"status": "error", "message": "没有碎片可兑换"})
-        
-        # 计算兑换数量
-        red_amount = red_crystal * 5
-        blue_amount = blue_crystal * 20
+
+        # 根据类型决定兑哪些碎片
+        if crystal_type == "red":
+            if red_crystal == 0:
+                reply = "你没有红色碎片可以兑换！"
+                if group_id and user_id:
+                    reply = f"<@{user_id}> {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "没有红碎片"})
+            exchange_red = red_crystal
+            exchange_blue = 0
+        elif crystal_type == "blue":
+            if blue_crystal == 0:
+                reply = "你没有蓝色碎片可以兑换！"
+                if group_id and user_id:
+                    reply = f"<@{user_id}> {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "没有蓝碎片"})
+            exchange_red = 0
+            exchange_blue = blue_crystal
+        else:
+            # 全部兑换（现有逻辑）
+            if red_crystal == 0 and blue_crystal == 0:
+                reply = "你没有可以兑换的碎片！"
+                if group_id and user_id:
+                    reply = f"<@{user_id}> {reply}"
+                send_message(reply, user_id, group_id)
+                return jsonify({"status": "error", "message": "没有碎片可兑换"})
+            exchange_red = red_crystal
+            exchange_blue = blue_crystal
+
+        # 计算兑换数量（红碎片 1:5呱太，蓝碎片 1:20呱太）
+        red_amount = exchange_red * 5
+        blue_amount = exchange_blue * 20
         total_amount = red_amount + blue_amount
-        
-        # 清空碎片
+
+        # 增量扣除碎片（load → 修改特定字段 → atomic save）
         pity_data = load_pity_data(user_id)
-        pity_data["red_crystal"] = 0
-        pity_data["blue_crystal"] = 0
+        if exchange_red > 0:
+            pity_data["red_crystal"] = max(0, pity_data.get("red_crystal", 0) - exchange_red)
+        if exchange_blue > 0:
+            pity_data["blue_crystal"] = max(0, pity_data.get("blue_crystal", 0) - exchange_blue)
         save_pity_data(user_id, pity_data)
-        
-        # 添加呱太
+
+        # 增量添加呱太
         add_gacha(user_id, total_amount)
-        
+
         # 构建回复消息
         parts = []
-        if red_crystal > 0:
-            parts.append(f"🔴红色碎片 x{red_crystal} → {red_amount} 呱太")
-        if blue_crystal > 0:
-            parts.append(f"🔵蓝色碎片 x{blue_crystal} → {blue_amount} 呱太")
-        
+        if exchange_red > 0:
+            parts.append(f"🔴红色碎片 x{exchange_red} → {red_amount} 呱太")
+        if exchange_blue > 0:
+            parts.append(f"🔵蓝色碎片 x{exchange_blue} → {blue_amount} 呱太")
+
         parts_str = '\n'.join(parts)
         reply = f"💎 兑换成功！\n{parts_str}\n总共获得: {total_amount} 呱太"
-        
+
         # 发送消息
         if group_id and user_id:
             reply = f"<@{user_id}> {reply}"
         send_message(reply, user_id, group_id)
-        
-        log_info(f"碎片兑换 [{user_id}]: red={red_crystal}, blue={blue_crystal}, total={total_amount}")
-        
+
+        log_info(f"碎片兑换 [{user_id}]: type={crystal_type or 'all'}, "
+                 f"red={exchange_red}, blue={exchange_blue}, total={total_amount}")
+
         return jsonify({
             "status": "success",
             "user_id": user_id,
-            "red_crystal_exchanged": red_crystal,
-            "blue_crystal_exchanged": blue_crystal,
+            "red_crystal_exchanged": exchange_red,
+            "blue_crystal_exchanged": exchange_blue,
             "gacha_added": total_amount,
             "current_gacha": get_gacha_count(user_id)
         })
     
     except Exception as e:
         log_error(f"碎片兑换失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
+
+
+# ========== CDKEY 兑换系统 ==========
+def get_cdkey_file(user_id: str) -> Path:
+    """获取用户 CDKEY 兑换记录文件路径"""
+    return INFO_DIR / f"cdkey_{user_id}.json"
+
+
+def load_cdkey_data(user_id: str) -> dict:
+    """加载用户 CDKEY 兑换记录（文件损坏自动回退到空记录）"""
+    f = get_cdkey_file(user_id)
+    if f.exists():
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+            # 校验结构
+            if not isinstance(data, dict) or not isinstance(data.get("used_keys", []), list):
+                log_error(f"用户 {user_id} CDKEY 记录格式异常，重置为空")
+                return {"used_keys": []}
+            return data
+        except (json.JSONDecodeError, IOError) as e:
+            log_error(f"用户 {user_id} CDKEY 记录读取失败: {e}，回退空记录")
+            return {"used_keys": []}
+    return {"used_keys": []}
+
+
+def save_cdkey_data(user_id: str, data: dict):
+    """保存用户 CDKEY 兑换记录（原子写入，崩溃安全）"""
+    _atomic_json_save(get_cdkey_file(user_id), data)
+
+
+def handle_cdkey_redeem(user_id: str, group_id, key: str):
+    """处理 CDKEY 兑换请求
+    - 每个用户每个 CDKEY 只能兑换一次
+    - 资源增量追加，不做全量覆盖
+    """
+    try:
+        # 1. 校验 CDKEY 是否存在
+        if not CDKEYS or key not in CDKEYS:
+            reply = f"「{key}」不是有效的兑换码~"
+            if group_id and user_id:
+                reply = f"<@{user_id}> {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "无效兑换码"})
+
+        # 2. 加载用户 CDKEY 记录
+        cdkey_data = load_cdkey_data(user_id)
+        used_keys = cdkey_data.get("used_keys", [])
+
+        # 3. 检查是否已兑换
+        if key in used_keys:
+            reply = f"你已经兑换过「{key}」啦~ 每个兑换码只能使用一次哦"
+            if group_id and user_id:
+                reply = f"<@{user_id}> {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "已兑换"})
+
+        # 4. 获取奖励配置
+        reward = CDKEYS[key]
+        reward_gacha = int(reward.get("gacha", 0) or 0)
+        reward_red = int(reward.get("red_crystal", 0) or 0)
+        reward_blue = int(reward.get("blue_crystal", 0) or 0)
+        desc = str(reward.get("desc", ""))
+        if desc:
+            desc = f" ({desc})"
+
+        # 5. 增量发放奖励（load → modify specific fields → atomic save）
+        parts = []
+        total_gacha = 0
+
+        if reward_gacha > 0:
+            gacha_data = load_gacha_data(user_id)
+            gacha_data["gacha"] = gacha_data.get("gacha", 0) + reward_gacha
+            save_gacha_data(user_id, gacha_data)
+            total_gacha += reward_gacha
+            parts.append(f"🪙 呱太 +{reward_gacha}")
+
+        if reward_red > 0:
+            pity_data = load_pity_data(user_id)
+            pity_data["red_crystal"] = pity_data.get("red_crystal", 0) + reward_red
+            save_pity_data(user_id, pity_data)
+            parts.append(f"🔴 红碎片 +{reward_red}")
+
+        if reward_blue > 0:
+            pity_data = load_pity_data(user_id)
+            pity_data["blue_crystal"] = pity_data.get("blue_crystal", 0) + reward_blue
+            save_pity_data(user_id, pity_data)
+            parts.append(f"🔵 蓝碎片 +{reward_blue}")
+
+        if not parts:
+            reply = f"兑换码「{key}」没有配置奖励，请联系管理员~"
+            if group_id and user_id:
+                reply = f"<@{user_id}> {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "无奖励"})
+
+        # 6. 记录兑换（追加 used_keys，不做全量覆盖）
+        used_keys.append(key)
+        cdkey_data["used_keys"] = used_keys
+        save_cdkey_data(user_id, cdkey_data)
+
+        # 7. 回复
+        parts_str = "\n".join(parts)
+        reply = f"🎁 兑换成功！{desc}\n{parts_str}"
+        if group_id and user_id:
+            reply = f"<@{user_id}> {reply}"
+        send_message(reply, user_id, group_id)
+
+        log_info(f"CDKEY兑换 [{user_id}]: key={key}, gacha={reward_gacha}, "
+                 f"red={reward_red}, blue={reward_blue}")
+
+        return jsonify({
+            "status": "success",
+            "key": key,
+            "gacha_added": reward_gacha,
+            "red_crystal_added": reward_red,
+            "blue_crystal_added": reward_blue,
+            "current_gacha": get_gacha_count(user_id),
+        })
+
+    except Exception as e:
+        log_error(f"CDKEY兑换失败 [{user_id}] key={key}: {e}")
+        reply = f"兑换失败，请稍后再试~"
+        if group_id and user_id:
+            reply = f"<@{user_id}> {reply}"
+        send_message(reply, user_id, group_id)
+        return jsonify({"status": "error", "message": str(e)})
 
 
 # ========== 三星池子命令处理 ==========
@@ -4012,7 +4374,7 @@ def handle_3star_pool(user_id: str, group_id, raw_message: str):
     
     except Exception as e:
         log_error(f"三星池失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def save_rolling_battle_log(user_id: str, result: dict) -> str:
@@ -4022,17 +4384,16 @@ def save_rolling_battle_log(user_id: str, result: dict) -> str:
     result["saved_at"] = datetime.now().strftime("%m-%d %H:%M:%S")
     # 只保留最近一次战斗
     logs = [result]
-    with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(logs, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(log_path, logs)
     return f"battle_{user_id} (共1次)"
 
 
-def handle_battle(user_id: str, group_id, raw_message: str):
+def handle_battle(user_id: str, group_id, raw_message: str, raw_mentions: list = None):
     """
     处理对战请求
     命令格式:
     - 战斗[1-5] - AI对战，可选难度1~5（默认2）
-    - 战斗 @玩家QQ - 与指定玩家对战
+    - 战斗 @玩家 - 与指定玩家对战
     - 对战说明 - 显示战斗帮助
     """
     try:
@@ -4050,17 +4411,21 @@ def handle_battle(user_id: str, group_id, raw_message: str):
             send_message(reply, user_id, group_id)
             return jsonify({"status": "success", "message": "显示战斗帮助"})
 
-        # 解析对手@（跳过bot自己的@mention，找战斗命令后的@）
-        import re
-        at_match = re.search(r'(?:战斗|对战|决斗).*?\<@(\d+)\]', raw_message)
+        # 解析对手@（使用主循环已解析的 mentions，与挑战命令一致）
+        if raw_mentions is None:
+            raw_mentions = []
         enemy_user_id = None
+        for mid in raw_mentions:
+            if mid != str(QQ_BOT_APP_ID) and mid != str(user_id):
+                enemy_user_id = mid
+                break
 
         # 解析难度: 战斗5, 战斗 3, 对战2 等
+        import re
         diff_match = re.search(r'(?:战斗|对战|决斗)\s*([1-5])', raw_message)
         ai_difficulty = int(diff_match.group(1)) if diff_match else 2
 
-        if at_match:
-            enemy_user_id = at_match.group(1)
+        if enemy_user_id:
             if enemy_user_id == user_id:
                 reply = "不能与自己对战！"
                 if group_id and user_id:
@@ -4167,7 +4532,7 @@ def handle_battle(user_id: str, group_id, raw_message: str):
         if group_id and user_id:
             reply = f"<@{user_id}> {reply}"
         send_message(reply, user_id, group_id)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_boss_battle(user_id: str, group_id, raw_message: str):
@@ -4286,7 +4651,7 @@ def handle_boss_battle(user_id: str, group_id, raw_message: str):
         if group_id and user_id:
             reply = f"<@{user_id}> {reply}"
         send_message(reply, user_id, group_id)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def generate_ai_team(difficulty: int = 2) -> dict:
@@ -4469,14 +4834,26 @@ def get_user_team(user_id: str) -> dict:
 
 # ========== 排行榜系统 ==========
 RANKING_FILE = INFO_DIR / "ranking.json"
+RANKING_REWARDS_FILE = INFO_DIR / "ranking_rewards.json"
+# 排行榜每日结算奖励: 第1名45000呱太, 第2名35000呱太, 第3名25000呱太
+RANKING_REWARDS = {1: 45000, 2: 35000, 3: 25000}
 
 def init_ranking():
     """初始化排行榜（如果文件不存在）"""
     if not RANKING_FILE.exists():
+        log_info("排行榜文件不存在，开始初始化...")
         # 初始排行榜：10个AI队伍
         ranking = []
         for i in range(10):
             ai_team = generate_ai_team(difficulty=i + 1 if i < 5 else 5)  # 排名越高AI越强
+            # 防御：如果 AI 队伍生成为空（角色数据未就绪），重试一次
+            if not ai_team.get("battle_cards") and not ai_team.get("assist_cards"):
+                log_error(f"AI队伍{i+1} 生成为空，重试...")
+                ai_team = generate_ai_team(difficulty=i + 1 if i < 5 else 5)
+            # 仍然为空则跳过这个位置
+            if not ai_team.get("battle_cards") and not ai_team.get("assist_cards"):
+                log_error(f"AI队伍{i+1} 仍然为空，使用空队伍占位")
+
             # 设置一个不满编的队伍（前几个位置为空）
             empty_positions = i // 3  # 越靠前的AI队伍越完整
             for pos in range(empty_positions):
@@ -4484,7 +4861,7 @@ def init_ranking():
                     ai_team["battle_cards"][pos] = None
                 if pos < len(ai_team["assist_cards"]):
                     ai_team["assist_cards"][pos] = None
-            
+
             ranking.append({
                 "rank": i + 1,
                 "is_ai": True,
@@ -4494,9 +4871,9 @@ def init_ranking():
                 "wins": 0,
                 "losses": 0
             })
-        
-        with open(RANKING_FILE, "w", encoding="utf-8") as f:
-            json.dump(ranking, f, ensure_ascii=False, indent=2)
+
+        _atomic_json_save(RANKING_FILE, ranking)
+        log_info(f"排行榜初始化完成: {len(ranking)} 个AI队伍")
 
 def load_ranking():
     """加载排行榜数据"""
@@ -4505,9 +4882,39 @@ def load_ranking():
         return json.load(f)
 
 def save_ranking(ranking):
-    """保存排行榜数据"""
-    with open(RANKING_FILE, "w", encoding="utf-8") as f:
-        json.dump(ranking, f, ensure_ascii=False, indent=2)
+    """保存排行榜数据（写入前自动备份到 backup/ 目录）"""
+    # 写前备份：保留最近 7 天的备份
+    if RANKING_FILE.exists():
+        try:
+            backup_dir = BACKUP_DIR / "rankings"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            today = datetime.now().strftime("%Y-%m-%d")
+            backup_path = backup_dir / f"ranking_{today}.json"
+            if not backup_path.exists():
+                import shutil
+                shutil.copy2(RANKING_FILE, backup_path)
+                # 清理 7 天前的旧备份
+                cutoff = datetime.now().timestamp() - 7 * 86400
+                for old in backup_dir.glob("ranking_*.json"):
+                    if old.stat().st_mtime < cutoff:
+                        old.unlink()
+        except Exception as e:
+            log_error(f"排行榜备份失败: {e}")
+    _atomic_json_save(RANKING_FILE, ranking)
+
+def load_ranking_rewards() -> dict:
+    """加载排行榜奖励记录"""
+    if not RANKING_REWARDS_FILE.exists():
+        return {"last_settlement_date": "", "players": {}}
+    try:
+        with open(RANKING_REWARDS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {"last_settlement_date": "", "players": {}}
+
+def save_ranking_rewards(data: dict):
+    """保存排行榜奖励记录"""
+    _atomic_json_save(RANKING_REWARDS_FILE, data)
 
 def get_player_ranking(user_id: str):
     """获取玩家的排名（如果不在排行榜中返回11）"""
@@ -4524,6 +4931,80 @@ def get_player_entry(user_id: str):
         if not entry["is_ai"] and entry["user_id"] == user_id:
             return entry
     return None
+
+def settle_ranking_rewards() -> dict | None:
+    """每日12:00结算排行榜前三名奖励（每天最多一次）"""
+    try:
+        rewards_data = load_ranking_rewards()
+        if not isinstance(rewards_data, dict):
+            log_error(f"排行榜结算: rewards_data 类型异常 {type(rewards_data)}, 重置")
+            rewards_data = {"last_settlement_date": "", "players": {}}
+
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # 今天已结算 → 跳过
+        if rewards_data.get("last_settlement_date") == today:
+            return None
+
+        # 还没到12:00 → 跳过
+        now = datetime.now()
+        if now.hour < 12:
+            return None
+
+        # 读取排行榜
+        ranking = load_ranking()
+        if not ranking or not isinstance(ranking, list):
+            return None
+
+        # 结算前三名中的真人玩家
+        settlement = {"date": today, "rewards": []}
+        players = rewards_data.setdefault("players", {})
+        if not isinstance(players, dict):
+            players = {}
+            rewards_data["players"] = players
+
+        for entry in ranking[:3]:
+            if not isinstance(entry, dict):
+                continue
+            rank = entry.get("rank")
+            if not isinstance(rank, int) or rank not in RANKING_REWARDS:
+                continue
+            if entry.get("is_ai", False):
+                continue  # AI 不发奖
+
+            user_id = str(entry.get("user_id", ""))
+            if not user_id:
+                continue
+            amount = RANKING_REWARDS[rank]
+            add_gacha(user_id, amount)
+
+            # 更新获奖次数
+            player_stats = players.setdefault(user_id, {"first": 0, "second": 0, "third": 0})
+            if not isinstance(player_stats, dict):
+                player_stats = {"first": 0, "second": 0, "third": 0}
+                players[user_id] = player_stats
+            rank_key = {1: "first", 2: "second", 3: "third"}[rank]
+            player_stats[rank_key] = player_stats.get(rank_key, 0) + 1
+
+            settlement["rewards"].append({
+                "rank": rank,
+                "user_id": user_id,
+                "nickname": get_nickname(user_id),
+                "amount": amount
+            })
+
+        # 无论有没有真人获奖，都标记今天已结算
+        rewards_data["last_settlement_date"] = today
+        save_ranking_rewards(rewards_data)
+
+        if settlement["rewards"]:
+            log_info(f"排行榜结算完成: {today}, 获奖 {len(settlement['rewards'])} 人")
+        return settlement
+
+    except Exception as e:
+        import traceback
+        log_error(f"排行榜结算异常: {e}\n{traceback.format_exc()}")
+        return None
 
 def add_player_to_ranking(user_id: str, nickname: str, team: dict, rank: int):
     """将玩家添加到排行榜（替换该位置的AI）"""
@@ -4632,7 +5113,9 @@ def _get_ranking_text(user_id: str) -> str:
         if entry["is_ai"]:
             lines.append(f"第{i}名: 🤖 {entry['nickname']} (AI)")
         else:
-            lines.append(f"第{i}名: 👤 {entry['nickname']} (玩家)")
+            # 玩家昵称实时从 nicknames.json 读取，保证改名后同步
+            nick = get_nickname(entry['user_id'])
+            lines.append(f"第{i}名: 👤 {nick} (玩家)")
     player_rank = get_player_ranking(user_id)
     if player_rank > 10:
         lines.append(f"\n你的排名: 第{player_rank}名 (未进入前10)")
@@ -4653,6 +5136,25 @@ def show_ranking(user_id: str, group_id):
         reply = f"<@{user_id}>\n{reply}"
     send_message(reply, user_id, group_id)
     return jsonify({"status": "success", "message": "显示排行榜"})
+
+def challenge_player(user_id: str, group_id, target_openid: str):
+    """@玩家 挑战：根据 openid 查找排名并发起挑战"""
+    ranking = load_ranking()
+    target_rank = None
+    target_nick = ""
+    for entry in ranking:
+        if entry.get("user_id") == target_openid:
+            target_rank = entry["rank"]
+            target_nick = get_nickname(target_openid)
+            break
+    if target_rank is None:
+        reply = f"该玩家不在排行榜中！（需先打过一次战斗才能上榜）"
+        if group_id and user_id:
+            reply = f"<@{user_id}> {reply}"
+        send_message(reply, user_id, group_id)
+        return
+    log_info(f"@挑战: {user_id} -> {target_openid} (排名{target_rank} {target_nick})")
+    return challenge_rank(user_id, group_id, target_rank)
 
 def challenge_rank(user_id: str, group_id, target_rank: int):
     """挑战指定排名的玩家/AI"""
@@ -4745,9 +5247,10 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
             log_info(f"敌方队伍 battle_cards: {enemy_team.get('battle_cards')}")
         
         # 开始战斗
-        enemy_name = target_entry["nickname"]
+        enemy_name = target_entry["nickname"] if target_entry["is_ai"] else get_nickname(target_entry["user_id"])
         
-        # 生成并发送双方VS配队图
+        # 生成双方VS配队图
+        vs_img = None
         try:
             characters = get_characters_dict()
             vs_img = build_vs_team_image(player_team_data, enemy_team, characters)
@@ -4782,49 +5285,47 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
                 send_message(enemy_team_display.strip(), user_id, group_id)
         except Exception as e:
             log_error(f"生成敌方配队图片失败: {e}")
-        
-        reply = f"⚔️ 正在挑战 {enemy_name}（排名第{target_rank}）..."
-        if group_id and user_id:
-            reply = f"<@{user_id}> {reply}"
-        send_message(reply, user_id, group_id)
-        
-        # 执行战斗
+
+        # 执行战斗（挑战上限15回合）
         log_info("开始执行战斗...")
         result = BATTLE_INSTANCE.start_battle(player_team_data, enemy_team, challenger="player",
-                                              extra_characters={**get_characters_dict(), **BATTLE_CHARACTERS})
+                                              extra_characters={**get_characters_dict(), **BATTLE_CHARACTERS},
+                                              max_rounds=15)
         log_info(f"战斗结束: winner={result.get('winner')}, rounds={result.get('rounds')}")
 
         # 保存战斗日志（滚动保留最近3次）
         save_rolling_battle_log(user_id, result)
 
         winner = result["winner"]
-        # 将user_id转换为字符串再切片
-        user_id_str = str(user_id)
-        player_nickname = get_nickname(user_id_str)
-        
+        player_nickname = get_nickname(str(user_id))
+
         if winner == "player":
             update_ranking_after_battle(user_id, target_entry["user_id"], False, target_entry["is_ai"], player_team_data, player_nickname)
         else:
             update_ranking_after_battle(target_entry["user_id"], user_id, target_entry["is_ai"], False)
-        
+
         rounds = result["rounds"]
         if winner == "player":
             new_rank = get_player_ranking(user_id)
             result_text = f"🏆 胜利！你击败了 {enemy_name}！\n🎉 你的新排名: 第{new_rank}名"
         else:
             result_text = f"💀 失败... 你被 {enemy_name} 击败了..."
-        
+
         player_alive = sum(1 for u in result["player_units"] if u["alive"] and not u["is_assist"])
         enemy_alive = sum(1 for u in result["enemy_units"] if u["alive"] and not u["is_assist"])
         result_text += f"\n📊 我方存活 {player_alive}/6, 敌方存活 {enemy_alive}/6"
         if active_slot > 0:
             result_text += f"\n📋 使用预设: 槽{active_slot}"
         result_text += "\n💡 输入「战斗日志」查看详细记录，输入「战斗GIF」生成动画"
-
         result_text += "\n\n" + _get_ranking_text(user_id)
-        if group_id and user_id:
-            result_text = f"<@{user_id}>\n{result_text}"
-        send_message(result_text, user_id, group_id)
+
+        # VS图 + 结果文字合并为一条消息
+        at_message = f"<@{user_id}> " if group_id and user_id else ""
+        full_text = f"⚔️ VS {enemy_name}（排名第{target_rank}）\n{result_text}"
+        if vs_img and os.path.exists(vs_img):
+            send_message_with_image(group_id or user_id, at_message + full_text, vs_img)
+        else:
+            send_message(at_message + full_text, user_id, group_id)
         
     except Exception as e:
         import traceback
@@ -4943,7 +5444,7 @@ def handle_battle_log(user_id: str, group_id, gen_gif: bool = False):
         if group_id and user_id:
             reply = f"<@{user_id}> {reply}"
         send_message(reply, user_id, group_id)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_team(user_id: str, group_id, raw_message: str):
@@ -4954,7 +5455,9 @@ def handle_team(user_id: str, group_id, raw_message: str):
         # 解析命令
         # 队伍 - 显示当前队伍（只显示图片）
         # 队伍 我的卡 - 显示三星卡图（50张，可翻页，无文字卡名）
-        # 队伍 我的卡 下一页/上一页 - 翻页查看三星卡
+        # 队伍 我的卡 红/绿/蓝/黄/紫/超红/超绿... - 按颜色筛选三星卡
+        # 队伍 我的卡 B/A - 按战斗/支援类型筛选三星卡
+        # 队伍 我的卡 下一页/上一页 - 翻页查看三星卡（保持筛选）
         # 队伍 设置 位置 序号(1-50) - 根据当前页序号设置卡牌
         # 队伍 设置 战斗位/支援位 位置 序号 - 手动指定类型
         # 队伍 清除 位置 - 清除该位置的战斗卡和支援卡
@@ -5006,12 +5509,72 @@ def handle_team(user_id: str, group_id, raw_message: str):
             return jsonify({"status": "success"})
         
         if '我的卡' in raw_message:
-            # 先获取总页数（用于验证页码）
-            user_cards = get_user_3star_cards(user_id, characters)
-            total_pages = max(1, (len(user_cards) + 50 - 1) // 50)
-            
-            # 处理翻页
             import re
+
+            # --- 解析筛选条件（颜色/B/A）---
+            # 从session恢复上次的筛选条件（翻页时保持筛选）
+            last_filter_color = None
+            last_filter_type = None
+            if team_session_file.exists():
+                try:
+                    with open(team_session_file, "r", encoding="utf-8") as f:
+                        sd = json.load(f)
+                    last_filter_color = sd.get("filter_color")
+                    last_filter_type = sd.get("filter_type")
+                except:
+                    pass
+
+            filter_color = last_filter_color
+            filter_type = last_filter_type
+
+            # 检查是否指定了新的筛选条件
+            BASE_COLORS = ["红", "绿", "蓝", "黄", "紫"]
+            SUPER_COLORS = ["超红", "超绿", "超蓝", "超黄", "超紫"]
+            ALL_COLORS = SUPER_COLORS + BASE_COLORS  # 超X优先匹配
+            after_mycard = raw_message.split('我的卡', 1)[-1] if '我的卡' in raw_message else ''
+            after_stripped = after_mycard.strip()
+
+            # 检测翻页/页码关键词
+            is_pagination = ('下一页' in after_mycard or '上一页' in after_mycard or
+                             bool(re.search(r'(第)?\d+(页)?', after_mycard)))
+
+            # 检测筛选关键词（含超属性）
+            has_color_filter = any(cn in after_mycard for cn in ALL_COLORS)
+            has_type_filter = (bool(re.search(r'(?<![a-zA-Z])[Bb](?![a-zA-Z])', after_mycard)) or
+                               bool(re.search(r'(?<![a-zA-Z])[Aa](?![a-zA-Z])', after_mycard)))
+
+            # 颜色筛选（超X优先，避免"超红"被"红"误匹配）
+            for cn in ALL_COLORS:
+                if cn in after_mycard:
+                    filter_color = cn
+                    break
+
+            # 类型筛选：匹配独立B/A（不与其他字母粘连）
+            if re.search(r'(?<![a-zA-Z])[Bb](?![a-zA-Z])', after_mycard):
+                filter_type = "battle"
+            elif re.search(r'(?<![a-zA-Z])[Aa](?![a-zA-Z])', after_mycard):
+                filter_type = "assist"
+
+            # 纯「队伍 我的卡」（无筛选无翻页）→ 清空筛选显示全部
+            if not after_stripped:
+                filter_color = None
+                filter_type = None
+            elif not has_color_filter and not has_type_filter and not is_pagination:
+                # 有其他文字但无筛选无翻页 → 也清空筛选
+                filter_color = None
+                filter_type = None
+
+            # 如果指定了筛选但和session不同，重置页码到第1页
+            if filter_color != last_filter_color or filter_type != last_filter_type:
+                current_page = 1
+
+            # --- 获取筛选后的总数和总页数 ---
+            user_cards = get_user_3star_cards(user_id, characters,
+                                               filter_color=filter_color,
+                                               filter_type=filter_type)
+            total_pages = max(1, (len(user_cards) + 50 - 1) // 50)
+
+            # --- 处理翻页 ---
             # 检查是否跳转到指定页码（如"队伍 我的卡 第3页"或"队伍 我的卡 3"）
             page_match = re.search(r'我的卡\s+(第)?(\d+)(页)?', raw_message)
             if page_match:
@@ -5025,39 +5588,80 @@ def handle_team(user_id: str, group_id, raw_message: str):
                 current_page -= 1
                 if current_page < 1:
                     current_page = 1
-            
+
             # 确保页码在有效范围内
             current_page = max(1, min(current_page, total_pages))
-            
-            # 保存当前页码
-            with open(team_session_file, "w", encoding="utf-8") as f:
-                json.dump({"cards_page": current_page}, f)
-            
+
+            # 保存当前页码和筛选条件
+            _atomic_json_save(team_session_file, {
+                "cards_page": current_page,
+                "filter_color": filter_color,
+                "filter_type": filter_type,
+            })
+
             # 显示用户拥有的三星卡（50张一页，只显示图片，无文字卡名）
-            img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 50)
-            
+            img_path, current_cards, total_pages = build_3star_cards_image(
+                user_id, characters, current_page, 50,
+                filter_color=filter_color, filter_type=filter_type)
+
             if not current_cards:
-                reply = "你还没有三星卡~"
+                # 有筛选条件时给更友好的提示
+                filter_desc = ""
+                if filter_color and filter_type:
+                    type_label = "B" if filter_type == "battle" else "A"
+                    filter_desc = f"{filter_color}色{type_label}卡"
+                elif filter_color:
+                    filter_desc = f"{filter_color}色卡"
+                elif filter_type:
+                    type_label = "B" if filter_type == "battle" else "A"
+                    filter_desc = f"{type_label}卡"
+                filter_desc = filter_desc.replace("黄色", "黄") if filter_desc else ""
+                if filter_desc:
+                    reply = f"你没有{filter_desc}~ 输入「队伍 我的卡」查看全部三星卡"
+                else:
+                    reply = "你还没有三星卡~"
                 if group_id and user_id:
                     reply = f"<@{user_id}> {reply}"
                 send_message(reply, user_id, group_id)
                 return jsonify({"status": "success", "message": "没有三星卡"})
-            
+
+            # 构建筛选标签
+            filter_label = ""
+            if filter_color and filter_type:
+                type_label = "B" if filter_type == "battle" else "A"
+                filter_label = f"【{filter_color}色{type_label}卡】"
+            elif filter_color:
+                filter_label = f"【{filter_color}色卡】"
+            elif filter_type:
+                type_label = "B" if filter_type == "battle" else "A"
+                filter_label = f"【{type_label}卡】"
+
+            filter_label = filter_label.replace("黄色", "黄") if filter_label else ""
+
+            # 构建翻页提示（带上筛选条件）
+            filter_suffix = ""
+            if filter_color:
+                filter_suffix += filter_color
+            if filter_type:
+                type_label = "B" if filter_type == "battle" else "A"
+                filter_suffix += type_label
+
             # 构建消息（只有图片和页码提示）
-            page_info = f"第{current_page}/{total_pages}页"
+            page_info = f"{filter_label} 第{current_page}/{total_pages}页"
             if total_pages > 1:
+                nav_cmd = f"队伍 我的卡 {filter_suffix}" if filter_suffix else "队伍 我的卡"
                 if current_page < total_pages:
-                    page_info += " | 输入「队伍 我的卡 下一页」查看下一页"
+                    page_info += f" | 输入「{nav_cmd} 下一页」查看下一页"
                 if current_page > 1:
-                    page_info += " | 输入「队伍 我的卡 上一页」查看上一页"
-                # 添加跳转到指定页码的提示
-                page_info += " | 输入「队伍 我的卡 页码」跳转到指定页"
-            
+                    page_info += f" | 输入「{nav_cmd} 上一页」查看上一页"
+                page_info += f" | 输入「{nav_cmd} 页码」跳转到指定页"
+            page_info += " | 输入「队伍 我的卡」查看全部"
+
             # 使用提示（根据当前页实际卡牌数量）
             current_page_size = len(current_cards)
             usage_hint = (f"设置: 队伍 设置 位置 序号(1-{current_page_size}) | "
                           f"切换预设: 队伍 切换 1~6")
-            
+
             if img_path and os.path.exists(img_path):
                 # 发送文字提示 + 图片
                 if group_id and user_id:
@@ -5065,7 +5669,7 @@ def handle_team(user_id: str, group_id, raw_message: str):
                 else:
                     at_message = ""
                 send_message_with_image(group_id or user_id, f"{at_message}{page_info}\n{usage_hint}", str(img_path))
-                
+
                 if os.path.exists(img_path):
                     os.remove(img_path)
             else:
@@ -5073,27 +5677,42 @@ def handle_team(user_id: str, group_id, raw_message: str):
                 if group_id and user_id:
                     reply = f"<@{user_id}> {reply}"
                 send_message(reply, user_id, group_id)
-            
+
             return jsonify({"status": "success", "message": "显示三星卡", "page": current_page, "total_pages": total_pages})
         
         elif '设置' in raw_message:
             # 设置队伍卡牌
             import re
+
+            # 读取当前session的筛选条件（确保设置时序号与显示一致）
+            _set_filter_color = None
+            _set_filter_type = None
+            if team_session_file.exists():
+                try:
+                    with open(team_session_file, "r", encoding="utf-8") as f:
+                        _sd = json.load(f)
+                    _set_filter_color = _sd.get("filter_color")
+                    _set_filter_type = _sd.get("filter_type")
+                except:
+                    pass
+
             # 匹配格式1: 队伍 设置 位置 序号（使用当前页的序号1-50）
             match_simple = re.search(r'设置\s+(\d+)\s+(\d+)', raw_message)
             # 匹配格式2: 队伍 设置 战斗位/支援位 位置 序号
             match_full = re.search(r'设置\s+(战斗位|支援位)\s+(\d+)\s+(\d+)', raw_message)
-            
+
             if match_simple and not match_full:
                 # 简化格式：使用序号选择卡牌
                 position = int(match_simple.group(1))
                 card_index = int(match_simple.group(2))  # 序号1-50
-                
+
                 if position < 1 or position > 6:
                     reply = "队伍位置必须在1-6之间！"
                 else:
-                    # 获取当前页的卡牌列表
-                    img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 50)
+                    # 获取当前页的卡牌列表（使用session中的筛选条件）
+                    img_path, current_cards, total_pages = build_3star_cards_image(
+                        user_id, characters, current_page, 50,
+                        filter_color=_set_filter_color, filter_type=_set_filter_type)
                     
                     if card_index < 1:
                         reply = "序号必须大于0！"
@@ -5141,8 +5760,10 @@ def handle_team(user_id: str, group_id, raw_message: str):
                 elif card_index < 1 or card_index > 10:
                     reply = "序号必须在1-10之间！"
                 else:
-                    # 获取当前页的卡牌列表
-                    img_path, current_cards, total_pages = build_3star_cards_image(user_id, characters, current_page, 10)
+                    # 获取当前页的卡牌列表（使用session中的筛选条件）
+                    img_path, current_cards, total_pages = build_3star_cards_image(
+                        user_id, characters, current_page, 10,
+                        filter_color=_set_filter_color, filter_type=_set_filter_type)
                     
                     if card_index > len(current_cards):
                         reply = f"当前页只有{len(current_cards)}张卡，序号{card_index}无效！"
@@ -5295,7 +5916,7 @@ def handle_team(user_id: str, group_id, raw_message: str):
     
     except Exception as e:
         log_error(f"配队处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_defense_team(user_id: str, group_id, raw_message: str):
@@ -5348,7 +5969,7 @@ def handle_defense_team(user_id: str, group_id, raw_message: str):
 
     except Exception as e:
         log_error(f"防守队处理失败: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
 def handle_help(user_id: str, group_id, raw_message: str = ""):
@@ -5498,7 +6119,8 @@ def _help_team() -> str:
 ║                              ║
 ║  ▸ 队伍 我的卡               ║
 ║    查看拥有的3星卡（配队用）  ║
-║    支持翻页：上一页/下一页    ║
+║    筛选: 红/绿/蓝/黄/紫       ║
+║    超红/超绿... B/A 支持翻页  ║
 ║                              ║
 ║  ▸ 队伍 设置 位置 序号       ║
 ║    把卡放入队伍指定位置(1~6)  ║
@@ -5543,10 +6165,10 @@ def _help_economy() -> str:
 ║  ▸ 签到                      ║
 ║    每日签到获得 {DAILY_REWARD} 呱太       ║
 ║                              ║
-║  ▸ 兑换呱太 / 兑换            ║
-║    用碎片兑换呱太             ║
-║    红色碎片 = ? 呱太          ║
-║    蓝色碎片 = ? 呱太          ║
+║  ▸ 兑换 / 兑换红碎片/蓝碎片   ║
+║    红碎片1:5呱太 蓝碎片1:20    ║
+║  ▸ 兑换 ABCDEFG               ║
+║    CDKEY兑换码（限一次）       ║
 ║                              ║
 ║  📊 消费价格表：              ║
 ║  ├ 单抽: {GACHA_COST} 呱太           ║
@@ -5628,12 +6250,54 @@ def handle_cute_reply(user_id: str, group_id):
 
 # ========== 启动 ==========
 if __name__ == '__main__':
+    # PID 文件锁：防止重复启动
+    import platform
+    PID_FILE = Path("/tmp/qq_bot_ws.pid")
+    if platform.system() != "Windows":
+        import fcntl
+        try:
+            _pid_fd = open(PID_FILE, "w")
+            fcntl.flock(_pid_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _pid_fd.write(str(os.getpid()))
+            _pid_fd.flush()
+        except (IOError, OSError):
+            print(f"[FATAL] Bot 已在运行中 (PID锁: {PID_FILE})")
+            try:
+                with open(PID_FILE) as pf:
+                    print(f"  运行中的 PID: {pf.read().strip()}")
+            except:
+                pass
+            print(f"  如需强制重启: kill $(cat {PID_FILE}) && rm {PID_FILE}")
+            sys.exit(1)
+        atexit.register(lambda: os.unlink(PID_FILE) if PID_FILE.exists() else None)
+    else:
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        PROCESS_QUERY_LIMITED_INFO = 0x1000
+        if PID_FILE.exists():
+            try:
+                old_pid = int(PID_FILE.read_text().strip())
+                handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFO, False, old_pid)
+                if handle:
+                    ctypes.windll.kernel32.CloseHandle(handle)
+                    print(f"[FATAL] Bot 已在运行中 (PID: {old_pid})")
+                    sys.exit(1)
+            except (ValueError, OSError):
+                pass
+        PID_FILE.write_text(str(os.getpid()))
+        atexit.register(lambda: os.unlink(PID_FILE) if PID_FILE.exists() else None)
+
     log_info("=" * 50)
     log_info("自动抽卡Bot 启动中...")
+    log_info(f"PID: {os.getpid()}")
     log_info(f"图标目录: {ICON_DIR}")
     log_info(f"星级图片目录: {LEVEL_DIR}")
     log_info(f"Excel文件: {XLSX_FILE}")
     log_info("=" * 50)
+
+    # 清理上次崩溃残留的临时图片，注册退出时清理
+    _cleanup_temp_images()
+    atexit.register(_cleanup_temp_images)
 
     # 每天第一次启动时备份抽卡记录
     backup_pity_records()

@@ -220,21 +220,56 @@ def load_pity_data(user_id: str) -> dict:
     return {}
 
 
-def get_user_3star_cards(user_id: str, characters: dict = None) -> list:
-    """获取用户拥有的所有三星卡（包含卡类型信息）"""
+def get_user_3star_cards(user_id: str, characters: dict = None,
+                         filter_color: str = None, filter_type: str = None) -> list:
+    """获取用户拥有的所有三星卡（支持按颜色和类型筛选）
+    :param filter_color: 颜色筛选（红/绿/蓝/黄/紫），同时匹配超X版本
+    :param filter_type: 类型筛选（"battle"或"assist"）
+    """
     pity_data = load_pity_data(user_id)
     card_collection = pity_data.get("card_collection", {})
-    
+
     three_star_cards = []
     for card_id, info in card_collection.items():
         if info.get("stars") == 3:
-            # 获取卡类型
+            # 获取卡类型和属性
             card_type = "battle"
+            card_attribute = ""
             if characters:
                 chara = characters.get(str(card_id))
                 if chara:
                     card_type = chara.get("type", "battle")
-            
+                    card_attribute = str(chara.get("attribute", "")).strip()
+
+            # 颜色筛选：
+            #   "黄" → 匹配 "黄" 和 "超黄"
+            #   "超黄" → 只匹配 "超黄"（不匹配普通"黄"）
+            # 注意：xlsx文件中用 赤/緑/青，需映射为 红/绿/蓝
+            if filter_color:
+                if not card_attribute:
+                    continue
+                _XLSX_COLOR_MAP = {'赤': '红', '緑': '绿', '青': '蓝'}
+                attr = card_attribute
+                is_super = attr.startswith('超')
+                base = attr[1:] if is_super else attr
+                base = _XLSX_COLOR_MAP.get(base, base)  # 赤→红, 緑→绿, 青→蓝
+                normalized = ('超' + base) if is_super else base
+
+                if filter_color.startswith("超"):
+                    # 精确匹配超属性（如"超红"只匹配"超赤"→"超红"）
+                    if normalized != filter_color:
+                        continue
+                else:
+                    # 基础颜色匹配：去除超前缀后对比（如"红"匹配"红"和"超红"）
+                    norm_base = normalized[1:] if normalized.startswith("超") else normalized
+                    if norm_base != filter_color:
+                        continue
+
+            # 类型筛选
+            if filter_type:
+                if card_type != filter_type:
+                    continue
+
             three_star_cards.append({
                 "card_id": card_id,
                 "name": info.get("name", ""),
@@ -242,7 +277,7 @@ def get_user_3star_cards(user_id: str, characters: dict = None) -> list:
                 "count": info.get("count", 1),
                 "type": card_type  # 添加卡类型：battle 或 assist
             })
-    
+
     return three_star_cards
 
 
@@ -430,13 +465,18 @@ def get_level_image(stars: int, layer_type: str) -> str:
     return None
 
 
-def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_size: int = 50) -> tuple:
+def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_size: int = 50,
+                             filter_color: str = None, filter_type: str = None) -> tuple:
     """
     构建三星卡展示图片（50张卡一页，10列x5行）
     使用bg_000001001.png作为背景
+    :param filter_color: 颜色筛选（红/绿/蓝/黄/紫）
+    :param filter_type: 类型筛选（"battle"或"assist"）
     :return: (图片路径, 当前页卡牌列表, 总页数)
     """
-    user_cards = get_user_3star_cards(user_id, characters)
+    user_cards = get_user_3star_cards(user_id, characters,
+                                       filter_color=filter_color,
+                                       filter_type=filter_type)
     
     if not user_cards:
         return None, [], 0

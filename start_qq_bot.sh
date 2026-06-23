@@ -1,6 +1,6 @@
 #!/bin/bash
 # QQ机器人一键启动脚本
-# 自动: 启动图片HTTP服务 → Cloudflare隧道 → 更新config → 启动Bot
+# 图片HTTP服务由 qq_bot_ws.py 内置启动，无需单独启动
 
 set -e
 cd "$(dirname "$0")"
@@ -13,7 +13,7 @@ echo "  QQ机器人 一键启动"
 echo "============================================"
 
 # 1. 停止旧进程
-echo "[1/4] 停止旧进程..."
+echo "[1/3] 停止旧进程..."
 if [ -f "$PID_FILE" ]; then
     old_pid=$(cat "$PID_FILE")
     kill "$old_pid" 2>/dev/null && echo "  已停止旧Bot PID=$old_pid" || true
@@ -26,70 +26,53 @@ sleep 1
 # 2. 创建静态图片目录
 mkdir -p static_images
 
-# 3. 启动Python内置图片HTTP服务（后台）
-echo "[2/4] 启动图片HTTP服务 (端口 $IMAGE_PORT)..."
-python3 -c "
-import http.server, os, threading
-os.chdir('static_images')
-h = http.server.HTTPServer(('0.0.0.0', $IMAGE_PORT), http.server.SimpleHTTPRequestHandler)
-t = threading.Thread(target=h.serve_forever, daemon=True)
-t.start()
-# 保持进程存活，让 cloudflared 能连接
-import time
-while True: time.sleep(60)
-" &
-IMG_PID=$!
-echo "  图片服务 PID=$IMG_PID"
+# 3. 先启动Bot（后台，内置图片HTTP服务 + PID文件锁），再启动Cloudflare Tunnel
+echo "[2/3] 启动 Bot（含内置图片服务 :$IMAGE_PORT）..."
+python3 qq_bot_ws.py > /tmp/qq_bot_ws.log 2>&1 &
+BOT_PID=$!
+sleep 2
+# 检测 Bot 是否启动成功（PID 锁是否获取成功）
+if ! kill -0 "$BOT_PID" 2>/dev/null; then
+    echo "  ✗ Bot 启动失败！可能已有实例在运行。"
+    echo "  查看日志: tail -20 /tmp/qq_bot_ws.log"
+    echo "  强制重启: bash stop_qq_bot.sh && bash start_qq_bot.sh"
+    exit 1
+fi
+echo "  Bot PID=$BOT_PID"
 
-# 4. 启动Cloudflare Tunnel（后台），自动获取URL
-echo "[3/4] 启动 Cloudflare Tunnel..."
+# 4. 启动Cloudflare Tunnel（后台），获取地址并更新config
+echo "[3/3] 启动 Cloudflare Tunnel..."
 cloudflared tunnel --url "http://localhost:$IMAGE_PORT" \
-    --no-autoupdate 2>&1 | while read line; do
-    echo "  [cloudflared] $line"
-    # 检测trycloudflare地址
-    if echo "$line" | grep -q "trycloudflare.com"; then
-        HOST=$(echo "$line" | grep -oP 'https://\K[^/]+\.trycloudflare\.com' | head -1)
-        if [ -n "$HOST" ]; then
-            echo ""
-            echo "  >>> 隧道地址: https://$HOST"
-            # 更新config.py
-            if grep -q "IMAGE_HOST" "$CONFIG_FILE"; then
-                sed -i "s/IMAGE_HOST = \".*\"/IMAGE_HOST = \"$HOST\"/" "$CONFIG_FILE"
-            else
-                echo "IMAGE_HOST = \"$HOST\"" >> "$CONFIG_FILE"
-            fi
-            echo "  >>> 已更新 $CONFIG_FILE"
-            break
-        fi
-    fi
-done &
+    --no-autoupdate > /tmp/qq_bot_tunnel.log 2>&1 &
 TUNNEL_PID=$!
 
 # 等待隧道就绪
 echo "  等待隧道就绪..."
 for i in $(seq 1 30); do
-    if grep -q "IMAGE_HOST = \"" "$CONFIG_FILE" 2>/dev/null; then
-        HOST=$(grep "IMAGE_HOST" "$CONFIG_FILE" | grep -oP '".*?"' | tr -d '"')
-        if [ -n "$HOST" ] && [ "$HOST" != "" ]; then
-            echo "  隧道已就绪: $HOST"
-            break
+    HOST=$(grep -oP 'https://\K[^ ]+\.trycloudflare\.com' /tmp/qq_bot_tunnel.log 2>/dev/null | head -1)
+    if [ -n "$HOST" ]; then
+        echo "  >>> 隧道地址: https://$HOST"
+        if grep -q "IMAGE_HOST" "$CONFIG_FILE"; then
+            sed -i "s/IMAGE_HOST = \".*\"/IMAGE_HOST = \"$HOST\"/" "$CONFIG_FILE"
+        else
+            echo "IMAGE_HOST = \"$HOST\"" >> "$CONFIG_FILE"
         fi
+        echo "  >>> 已更新 $CONFIG_FILE"
+        break
     fi
     sleep 2
 done
 
-# 5. 启动Bot主程序（前台）
-echo "[4/4] 启动 Bot..."
-python3 qq_bot_ws.py &
-BOT_PID=$!
-echo "$BOT_PID" > "$PID_FILE"
-echo "  Bot PID=$BOT_PID"
+if [ -z "$HOST" ]; then
+    echo "  ⚠ 隧道启动超时，请手动检查 /tmp/qq_bot_tunnel.log"
+fi
 
 echo ""
 echo "============================================"
 echo "  启动完成！"
 echo "  Bot PID: $BOT_PID"
-echo "  查看日志: tail -f nohup.out"
+echo "  Bot日志: tail -f /tmp/qq_bot_ws.log"
+echo "  隧道日志: tail -f /tmp/qq_bot_tunnel.log"
 echo "  停止: bash stop_qq_bot.sh"
 echo "============================================"
 

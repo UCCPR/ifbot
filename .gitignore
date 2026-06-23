@@ -2,5 +2,6 @@ __pycache__/
 output/
 info/
 kook/
+config.json
 config.py
 config.jsonagentmd

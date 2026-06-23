@@ -1,7 +1,7 @@
 [Unit]
 Description=QQ Bot Cloudflare Tunnel
-After=qqbot-image.service
-Requires=qqbot-image.service
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
