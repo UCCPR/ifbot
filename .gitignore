@@ -2,6 +2,10 @@ __pycache__/
 output/
 info/
 kook/
+agentmd/
+backup/
+discord/
+kook/
 config.json
 config.py
 config.jsonagentmd
