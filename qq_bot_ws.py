@@ -1151,27 +1151,39 @@ def _cleanup_temp_images():
         log_info(f"清理过期临时文件: {count} 个")
 
 def _start_image_server():
-    """启动内置HTTP文件服务（后台线程，端口18080）"""
-    import threading, http.server
+    """启动内置HTTP文件服务（后台线程，端口18080，多线程）"""
+    import threading, http.server, socketserver
     img_dir = BASE_DIR / "static_images"
     img_dir.mkdir(exist_ok=True)
     def _serve():
         os.chdir(str(img_dir))
         import socket
-        class ReuseHTTPServer(http.server.HTTPServer):
+        class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
             allow_reuse_address = True
+            daemon_threads = True
             def server_bind(self):
                 self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 super().server_bind()
         try:
-            with ReuseHTTPServer(("0.0.0.0", 18080), http.server.SimpleHTTPRequestHandler) as h:
-                log_info("图片HTTP: 0.0.0.0:18080 \u2713")
+            with ThreadingHTTPServer(("0.0.0.0", 18080), http.server.SimpleHTTPRequestHandler) as h:
+                log_info("图片HTTP: 0.0.0.0:18080 \u2713 (多线程)")
                 h.serve_forever()
         except OSError as e:
             log_error(f"图片HTTP启动失败(端口18080被占用): {e}")
         except Exception as e:
             log_error(f"图片HTTP服务异常: {e}")
     threading.Thread(target=_serve, daemon=True).start()
+
+    # 定期清理过期临时图片（每30分钟）
+    def _periodic_cleanup():
+        import time as _time
+        while True:
+            _time.sleep(1800)
+            try:
+                _cleanup_temp_images()
+            except Exception:
+                pass
+    threading.Thread(target=_periodic_cleanup, daemon=True).start()
 
 
 async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str = "", is_group: bool = True, msg_id: str = ""):
