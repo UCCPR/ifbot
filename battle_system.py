@@ -1114,7 +1114,7 @@ class BattleSystem:
         defense = self._calculate_defense(defender)
         
         # 5. 核心伤害公式：伤害 = 攻击^2 / (攻击 + 防御)
-        damage = int(attack ** 2 / (attack + defense))
+        damage = int(attack ** 2 / max(attack + defense, 1))
         
         # 6. 属性克制
         attr_mult = self._get_attribute_multiplier(attacker.character.attribute, defender.character.attribute)
@@ -1433,6 +1433,7 @@ class BattleSystem:
                     results.append(f"{target_name} ({damage}伤害，不屈！HP={target.current_hp}) [{damage_type}]")
                 else:
                     target.current_hp = 0; target.alive = False
+                    if target.position >= 0: target._last_valid_position = target.position
                     if target.assist_unit: target.assist_unit.alive = False
                     results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
                     # B类: 自身使敌方退场时 + A类(pair): 我方一对角色使敌方退场时
@@ -1555,6 +1556,7 @@ class BattleSystem:
                 else:
                     target.current_hp = 0; target.alive = False
                     if target.assist_unit: target.assist_unit.alive = False
+                    if target.position >= 0: target._last_valid_position = target.position
                     results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
                     # B类: 自身使敌方退场时 + A类(pair): 我方一对角色使敌方退场时
                     if allies:
@@ -1693,6 +1695,7 @@ class BattleSystem:
                 else:
                     target.current_hp = 0; target.alive = False
                     if target.assist_unit: target.assist_unit.alive = False
+                    if target.position >= 0: target._last_valid_position = target.position
                     results.append(f"{target_name} ({damage}伤害，击破！) [{damage_type}]")
                     # B类: 自身使敌方退场时 + A类(pair): 我方一对角色使敌方退场时
                     if allies:
@@ -1808,13 +1811,14 @@ class BattleSystem:
         if "自身以外" in area:
             targets = [u for u in allies if not u.is_assist and u.alive and u != source_unit]
         elif "我方一对角色" in area:
-            # 自身 + 相邻1格的友方（5列布局中相邻即±1）
+            # 自身 + 相邻1格的友方（5列布局中相邻即±1，按位置排序确保确定性）
             targets = [source_unit]
-            for ally in allies:
-                if ally != source_unit and not ally.is_assist and ally.alive:
-                    if abs((ally.position % 5) - (source_unit.position % 5)) == 1:
-                        targets.append(ally)
-                        break
+            sorted_allies = sorted([a for a in allies if a != source_unit and not a.is_assist and a.alive],
+                                    key=lambda x: x.position)
+            for ally in sorted_allies:
+                if abs((ally.position % 5) - (source_unit.position % 5)) == 1:
+                    targets.append(ally)
+                    break
         elif "我方全体" in area:
             targets = [u for u in allies if not u.is_assist and u.alive and u.position < 5]
         elif "敌全体" in area:
@@ -2385,13 +2389,32 @@ class BattleSystem:
             return "skill"
         return "normal"
     
-    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player", initial_player_sp: int = 0, extra_characters: dict = None, max_rounds: int = 12) -> dict:
-        """开始战斗"""
+    def start_battle(self, player_team: dict, enemy_team: dict, challenger: str = "player", initial_player_sp: int = 0, extra_characters: dict = None, max_rounds: int = 12, player_hp_override: dict = None) -> dict:
+        """开始战斗
+        :param player_hp_override: 玩家角色HP覆盖 {card_id: hp}，用于RAID血量继承
+        """
         log_battle("=" * 50)
         log_battle("战斗开始！")
 
         player_units = self.build_battle_team(player_team, extra_characters)
         enemy_units = self.build_battle_team(enemy_team, extra_characters)
+
+        # 应用玩家HP覆盖（在build_battle_team之后，B+A属性合并后）
+        if player_hp_override:
+            for u in player_units:
+                if u.is_assist:
+                    continue
+                cid = str(u.character.card_id)
+                if cid in player_hp_override:
+                    override_hp = player_hp_override[cid]
+                    if override_hp <= 0:
+                        # HP=0表示阵亡
+                        u.current_hp = 0
+                        u.max_hp = max(u.max_hp, 1)
+                        u.alive = False
+                    else:
+                        u.current_hp = override_hp
+                        u.max_hp = max(u.max_hp, override_hp)
 
         # 给角色名加位置箭头: 友方5列, 敌方5列
         p_arrows = {0:'↙', 1:'←', 2:'↓', 3:'→', 4:'↘'}
@@ -2410,7 +2433,7 @@ class BattleSystem:
             parts = []
             for u in player_units + enemy_units:
                 if not u.is_assist and u.position >= 0 and u.position < 5:
-                    parts.append(f"{u.character.name}:{u.position}:{u.current_hp}:{u.alive}")
+                    parts.append(f"{u.character.name}:{u.position}:{u.current_hp}:{u.alive}:{getattr(u, 'is_broken', False)}")
                     parts.append("B:" + ",".join(
                         f"{b.name}:{b.magnitude}" for b in sorted(u.buffs, key=lambda x: x.name)))
                     parts.append("D:" + ",".join(
@@ -2580,22 +2603,7 @@ class BattleSystem:
         
         player_starters = player_alive_all[:INITIAL_DEPLOY_COUNT]
         enemy_starters = enemy_alive_all[:INITIAL_DEPLOY_COUNT]
-        # 在记录战斗日志前添加位置箭头（确保箭头与实际位置一致）
-        p_arrows = ['↙', '←', '↓', '→', '↘']
-        e_arrows = ['↖', '←', '↑', '→', '↗']
-        
-        for u in player_units:
-            if not u.is_assist and u.position >= 0 and u.position < 5:
-                # 避免重复添加箭头
-                if '[' not in u.character.name or ']' not in u.character.name:
-                    u.character.name = f'{u.character.name}[{p_arrows[u.position]}]'
-        
-        for u in enemy_units:
-            if not u.is_assist and u.position >= 0 and u.position < 5:
-                # 避免重复添加箭头
-                if '[' not in u.character.name or ']' not in u.character.name:
-                    u.character.name = f'{u.character.name}[{e_arrows[u.position]}]'
-        
+
         p1_fired = False
         p1_last_text = ''
         for unit in player_starters:
@@ -2649,14 +2657,14 @@ class BattleSystem:
                 return self._create_result("player", round_num, battle_log, parsable_battle_log, player_units, enemy_units)
 
             # 刷新场上单位（初始3人已在P1分配0/2/4列，之后保持位置）
-            player_on_field = player_alive_all[:INITIAL_DEPLOY_COUNT]
+            player_on_field = [u for u in player_alive_all if not u.is_assist and u.alive and u.position >= 0][:INITIAL_DEPLOY_COUNT]
             player_on_field.sort(key=lambda x: x.position)
-            enemy_on_field = enemy_alive_all[:INITIAL_DEPLOY_COUNT]
+            enemy_on_field = [u for u in enemy_alive_all if not u.is_assist and u.alive and u.position >= 0][:INITIAL_DEPLOY_COUNT]
             enemy_on_field.sort(key=lambda x: x.position)
             
             # ===== 半回合处理 =====
             # 优先级: P2替补→P3行动开始→P4攻击→P5被攻击→P6 HP阈值→P7 SP满→P8 Break
-            def half_turn(side_units, side_enemies, all_units, side_sp, tag, round_log):
+            def half_turn(side_units, side_enemies, all_units, side_sp, tag, round_log, defender_sp=300):
                 """执行半回合，返回(攻击方新SP, 防守方获得SP)"""
                 defender_sp_total = 0  # 防守方本回合被攻击获得的SP
 
@@ -2673,6 +2681,8 @@ class BattleSystem:
                         if pos >= 0 and pos < 5 and pos not in dead_positions:
                             dead_positions.append(pos)
                 dead_positions.sort()
+                # 限制替补数量不超过可用死亡位置
+                needed = min(needed, len(dead_positions))
                 # 记录被替补继承的位置
                 inherited_positions = set()
                 for i, u in enumerate(alive_bench[:needed]):
@@ -2832,6 +2842,11 @@ class BattleSystem:
                 # DoT (between P3 and P4)
                 dot_fired = False
                 dot_pcts = {'小': 0.03, '中': 0.05, '大': 0.08}
+                # DoT前HP快照（用于DoT后P6检查）
+                dot_hp_before = {}
+                for u in list(side_units):
+                    if u.alive:
+                        dot_hp_before[id(u)] = u.current_hp
                 for unit in list(side_units):
                     if unit.alive:
                         for d in list(unit.debuffs):
@@ -2845,8 +2860,11 @@ class BattleSystem:
                                     if not self._check_tenacity(unit):
                                         unit.current_hp = 0
                                         unit.alive = False
+                                        if unit.position >= 0: unit._last_valid_position = unit.position
                                         if unit.assist_unit:
                                             unit.assist_unit.alive = False
+                                        # 保存原始位置，避免退场A卡触发时position已被清空
+                                        _dead_pos_backup = unit.position
                                         round_log.append(f'  [持续被害] {unit.character.name} 被DoT击破！')
                                         # P10: 自身退场时触发
                                         sp_gained, r_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '自身退场时')
@@ -2867,36 +2885,79 @@ class BattleSystem:
                 if dot_fired:
                     _log(round_log[-1] if round_log else '', {"type": "dot_damage"})
 
+                # DoT后P6 HP阈值检查
+                if dot_fired:
+                    for u in list(side_units):
+                        if not u.alive or id(u) not in dot_hp_before: continue
+                        hp_pct = u.current_hp / u.max_hp if u.max_hp > 0 else 0
+                        hp_before_pct = dot_hp_before[id(u)] / u.max_hp if u.max_hp > 0 else 0
+                        if hp_pct < 0.5 and hp_before_pct >= 0.5:
+                            round_log.append(f'  [HP阈值] {u.character.name} HP低于50%')
+                            sp_gained, hp_logs = self.trigger_assist_effects(u, side_units, side_enemies, 'HP低于50%时')
+                            side_sp = self.add_sp(side_sp, sp_gained); round_log.extend(hp_logs)
+                        if hp_pct < 0.3 and hp_before_pct >= 0.3:
+                            round_log.append(f'  [HP阈值] {u.character.name} HP低于30%')
+                            sp_gained, hp_logs = self.trigger_assist_effects(u, side_units, side_enemies, 'HP低于30%时')
+                            side_sp = self.add_sp(side_sp, sp_gained); round_log.extend(hp_logs)
+
                 # ===== P4: 攻击决策 =====
                 planned = {}
                 sp = side_sp
 
                 # ===== P7: 敌方SP满时触发 (在攻击方行动前，防御方SP满时触发) =====
                 p7_fired = False
-                opp_tag = 'E' if tag == 'P' else 'P'
-                for opp_unit in side_enemies:
-                    if opp_unit.alive and not opp_unit.is_assist:
-                        sp_gained, p7_logs = self.trigger_assist_effects(
-                            opp_unit, side_enemies, side_units, '敌方SP满时')
-                        side_sp = self.add_sp(side_sp, sp_gained)
-                        round_log.extend(p7_logs)
-                        if p7_logs: p7_fired = True
+                if defender_sp >= SP_MAX:
+                    for opp_unit in side_enemies:
+                        if opp_unit.alive and not opp_unit.is_assist:
+                            sp_gained, p7_logs = self.trigger_assist_effects(
+                                opp_unit, side_enemies, side_units, '敌方SP满时')
+                            side_sp = self.add_sp(side_sp, sp_gained)
+                            round_log.extend(p7_logs)
+                            if p7_logs: p7_fired = True
                 if p7_fired:
                     _log(round_log[-1] if round_log else '', {"type": "trigger", "trigger_type": "P7"})
 
+                # P4: 智能SP分配（两阶段：先标记候选，再按优先级分配）
+                action_candidates = []
                 for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
                     has_ult = bool(unit.character.ultimate) if hasattr(unit.character, 'ultimate') else False
                     has_skill = bool(unit.character.skill) if hasattr(unit.character, 'skill') else False
                     sealed_skill = any(d.name == '技能封印' for d in unit.debuffs)
                     sealed_ult = any(d.name == '必杀封印' for d in unit.debuffs)
-                    sealed_assist = any(d.name == 'a卡封印' for d in unit.debuffs)
                     has_targets = bool(self.get_targets_in_direction(unit, side_enemies))
-                    if has_targets and sp >= ULT_COST and unit.ult_cooldown == 0 and not sealed_ult and has_ult:
-                        planned[id(unit)] = 'ultimate'; sp -= ULT_COST
-                    elif has_targets and sp >= 30 and unit.skill_cooldown == 0 and not sealed_skill and has_skill:
-                        planned[id(unit)] = 'skill'; sp -= 30
+
+                    # 检查是否有"自身技能时"或"自身必杀时"A卡效果 → 提高优先级
+                    has_skill_trigger = False
+                    has_ult_trigger = False
+                    if unit.assist_unit:
+                        for eff in [unit.assist_unit.character.assist_effect1, unit.assist_unit.character.assist_effect2]:
+                            if eff and eff.is_ready():
+                                tt = eff.trigger_time
+                                if tt in ('自身技能时',): has_skill_trigger = True
+                                if tt in ('自身必杀时',): has_ult_trigger = True
+
+                    priority = unit.character.speed  # 基础优先级=速度
+                    if has_ult_trigger: priority += 10000  # 有必杀触发A卡 → 最高优先
+                    if has_skill_trigger: priority += 5000  # 有技能触发A卡 → 高优先
+
+                    want_ult = has_targets and unit.ult_cooldown == 0 and not sealed_ult and has_ult
+                    want_skill = has_targets and unit.skill_cooldown == 0 and not sealed_skill and has_skill
+
+                    if want_ult:
+                        action_candidates.append((priority, 'ultimate', unit, ULT_COST))
+                    elif want_skill:
+                        action_candidates.append((priority, 'skill', unit, 30))
                     else:
-                        planned[id(unit)] = 'normal'
+                        action_candidates.append((priority, 'normal', unit, 0))
+
+                # 按优先级降序分配SP
+                action_candidates.sort(key=lambda x: x[0], reverse=True)
+                for priority, action, unit, cost in action_candidates:
+                    if action != 'normal' and sp < cost:
+                        action = 'normal'  # SP不足降级为普攻
+                    planned[id(unit)] = action
+                    if action != 'normal':
+                        sp -= cost
 
                 # ===== P4+P5: 执行攻击 + 被攻击时触发（execute内部处理P5）=====
                 for unit in sorted([u for u in side_units if u.alive], key=lambda x: x.character.speed, reverse=True):
@@ -3003,6 +3064,10 @@ class BattleSystem:
                     dead_enemies = [e for e in enemies if id(e) in hp_before and not e.alive and hp_before[id(e)] > 0]
                     for dead in dead_enemies:
                         round_log.append(f'  [退场] {dead.character.name} 被击破！')
+                        # 退场A卡"一对角色"需要原始position做相邻判断，临时恢复
+                        _saved_dead_pos = dead.position
+                        if _saved_dead_pos < 0 and hasattr(dead, '_last_valid_position') and dead._last_valid_position >= 0:
+                            dead.position = dead._last_valid_position
                         sp_gained, r_logs = self.trigger_assist_effects(dead, side_enemies, side_units, '自身退场时')
                         side_sp = self.add_sp(side_sp, sp_gained); round_log.extend(r_logs)
                         sp_gained, r_logs = self.trigger_assist_effects(dead, side_enemies, side_units, '我方一对角色退场时')
@@ -3011,9 +3076,13 @@ class BattleSystem:
                             if other is dead or other.is_assist or not other.alive: continue
                             sp, logs = self.trigger_assist_effects(other, side_enemies, side_units, '自身以外的我方退场时')
                             side_sp = self.add_sp(side_sp, sp); round_log.extend(logs)
+                        dead.position = _saved_dead_pos
                         p10_fired = True
                     if id(unit) in hp_before and not unit.alive and hp_before[id(unit)] > 0:
                         round_log.append(f'  [退场] {unit.character.name} 被反射击破！')
+                        _saved_unit_pos = unit.position
+                        if _saved_unit_pos < 0 and hasattr(unit, '_last_valid_position') and unit._last_valid_position >= 0:
+                            unit.position = unit._last_valid_position
                         sp_gained, r_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '自身退场时')
                         side_sp = self.add_sp(side_sp, sp_gained); round_log.extend(r_logs)
                         sp_gained, r_logs = self.trigger_assist_effects(unit, side_units, side_enemies, '我方一对角色退场时')
@@ -3022,6 +3091,7 @@ class BattleSystem:
                             if other is unit or other.is_assist or not other.alive: continue
                             sp, logs = self.trigger_assist_effects(other, side_units, side_enemies, '自身以外的我方退场时')
                             side_sp = self.add_sp(side_sp, sp); round_log.extend(logs)
+                        unit.position = _saved_unit_pos
                         p10_fired = True
 
                     if p10_fired:
@@ -3087,9 +3157,9 @@ class BattleSystem:
 
             # 半回合前刷新场上（替补进场由half_turn内部处理）
             # 只取3人上场，保持原有位置
-            player_on_field = [u for u in player_units if not u.is_assist and u.alive][:INITIAL_DEPLOY_COUNT]
+            player_on_field = [u for u in player_units if not u.is_assist and u.alive and u.position >= 0][:INITIAL_DEPLOY_COUNT]
             player_on_field.sort(key=lambda x: x.position)
-            enemy_on_field = [u for u in enemy_units if not u.is_assist and u.alive][:INITIAL_DEPLOY_COUNT]
+            enemy_on_field = [u for u in enemy_units if not u.is_assist and u.alive and u.position >= 0][:INITIAL_DEPLOY_COUNT]
             enemy_on_field.sort(key=lambda x: x.position)
 
             # ===== P3: 敌方行动开始时触发（Player turn前，敌方单位触发）=====
@@ -3105,7 +3175,7 @@ class BattleSystem:
 
             _log(f'\n[SP] player:{player_sp} enemy:{enemy_sp}', {"type": "sp_info", "player_sp": player_sp, "enemy_sp": enemy_sp})
             _log('[Player turn]', {"type": "turn_switch", "side": "player"})
-            player_sp, enemy_def_sp = half_turn(player_on_field, enemy_on_field, player_units, player_sp, 'P', round_log)
+            player_sp, enemy_def_sp = half_turn(player_on_field, enemy_on_field, player_units, player_sp, 'P', round_log, defender_sp=enemy_sp)
             enemy_sp = self.add_sp(enemy_sp, enemy_def_sp)
 
             # 检查全部6个单位（含替补）
@@ -3130,18 +3200,22 @@ class BattleSystem:
                 _log(p3_player_last, {"type": "assist_trigger", "trigger_type": "敌方行动开始时"})
 
             _log('[Enemy turn]', {"type": "turn_switch", "side": "enemy"})
-            enemy_sp, player_def_sp = half_turn(enemy_on_field, player_on_field, enemy_units, enemy_sp, 'E', round_log)
+            enemy_sp, player_def_sp = half_turn(enemy_on_field, player_on_field, enemy_units, enemy_sp, 'E', round_log, defender_sp=player_sp)
             player_sp = self.add_sp(player_sp, player_def_sp)  # 防守方(玩家)获得被攻击SP
 
             # 回合结束buff/debuff到期
             expiry_fired = False
             for u in player_units + enemy_units:
                 for b in list(u.buffs):
-                    if b.duration > 0: b.duration -= 1
-                    if b.duration <= 0 and b.duration != 0: u.buffs.remove(b); expiry_fired = True
+                    if b.duration > 0:
+                        b.duration -= 1
+                        if b.duration <= 0:
+                            u.buffs.remove(b); expiry_fired = True
                 for d in list(u.debuffs):
-                    if d.duration > 0: d.duration -= 1
-                    if d.duration <= 0 and d.duration != 0: u.debuffs.remove(d); expiry_fired = True
+                    if d.duration > 0:
+                        d.duration -= 1
+                        if d.duration <= 0:
+                            u.debuffs.remove(d); expiry_fired = True
             if expiry_fired:
                 _log('', {"type": "buff_expiry"})
 
@@ -3152,13 +3226,18 @@ class BattleSystem:
         
         return self._create_result(winner, max_rounds, battle_log, parsable_battle_log, player_units, enemy_units)
 
-    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 300, extra_characters: dict = None) -> dict:
-        """BOSS战：玩家队伍 vs 单个1500万血量BOSS（12回合限制）
+    def start_boss_battle(self, player_team: dict, boss_card_id: str, initial_sp: int = 300,
+                           extra_characters: dict = None,
+                           player_initial_hp: dict = None,
+                           boss_hp_override: int = None) -> dict:
+        """BOSS战：玩家队伍 vs BOSS（12回合限制）
 
         :param player_team: 玩家队伍数据 {"battle_cards": [...], "assist_cards": [...]}
         :param boss_card_id: BOSS角色卡牌ID
         :param initial_sp: 玩家初始SP（默认300，即开局满SP）
         :param extra_characters: 额外角色数据（用于补充战斗数据库中没有的卡）
+        :param player_initial_hp: 玩家角色初始HP覆盖 {card_id: hp}，用于RAID血量继承
+        :param boss_hp_override: BOSS血量覆盖（RAID中BOSS有不同HP）
         :return: BOSS战结果字典
         """
         log_battle("=" * 50)
@@ -3185,21 +3264,22 @@ class BattleSystem:
 
         boss_name = boss_char.name
 
-        # 临时将BOSS角色HP改为1500万
+        # 设置BOSS HP
         original_hp = boss_char.hp
-        boss_char.hp = 15_000_000
-        BOSS_STARTING_HP = 15_000_000
+        BOSS_STARTING_HP = boss_hp_override if boss_hp_override else 15_000_000
+        boss_char.hp = BOSS_STARTING_HP
 
         try:
             # 构建BOSS队伍（位置1=中间列，单卡，无A卡）
             boss_team = {"battle_cards": [None, boss_card_id], "assist_cards": []}
 
-            # 调用现有战斗系统
+            # 调用现有战斗系统（player_hp_override在build_battle_team之后应用）
             result = self.start_battle(
                 player_team, boss_team,
                 challenger="player",
                 initial_player_sp=initial_sp,
-                extra_characters=extra_characters
+                extra_characters=extra_characters,
+                player_hp_override=player_initial_hp,
             )
         finally:
             # 恢复BOSS原始HP

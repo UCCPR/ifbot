@@ -13,6 +13,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from card_image import find_attribute_icon, find_type_icon, get_level_image
+
 
 # ========== 日志模块 ==========
 def log_info(message: str):
@@ -42,6 +44,22 @@ OUTPUT_DIR = BASE_DIR / "output"
 # 队伍配置
 BATTLE_CARD_COUNT = 6  # 战斗卡数量
 ASSIST_CARD_COUNT = 6  # 支援卡数量（与战斗卡一一对应）
+
+
+def _ensure_char_dict(characters):
+    """确保characters是dict格式（card_id -> data）"""
+    if characters is None:
+        return {}
+    if isinstance(characters, dict):
+        return characters
+    if isinstance(characters, list):
+        result = {}
+        for c in characters:
+            cid = c.get("card_id") or c.get("id", "")
+            if cid:
+                result[str(cid)] = c
+        return result
+    return characters
 
 
 # 确保目录存在
@@ -82,8 +100,8 @@ def save_team_data(user_id: str, team_data: dict):
         json.dump(team_data, f, indent=2)
 
 
-# ========== 队伍预设系统（6个预设槽位） ==========
-MAX_PRESETS = 6
+# ========== 队伍预设系统（11个预设槽位：1-6普通 + 7-11 RAID） ==========
+MAX_PRESETS = 11
 PRESET_CYCLE = 0  # 满了之后从第几个开始覆盖（递增）
 
 
@@ -112,7 +130,12 @@ def load_presets(user_id: str) -> dict:
 
 
 def save_presets(user_id: str, data: dict):
-    """保存所有预设"""
+    """保存所有预设（确保长度为MAX_PRESETS）"""
+    # 确保 presets 列表长度为 MAX_PRESETS
+    presets = data.get("presets", [])
+    while len(presets) < MAX_PRESETS:
+        presets.append(None)
+    data["presets"] = presets[:MAX_PRESETS]
     f = get_presets_file(user_id)
     with open(f, "w", encoding="utf-8") as fp:
         json.dump(data, fp, indent=2)
@@ -143,7 +166,7 @@ def auto_save_preset(user_id: str):
         save_presets(user_id, presets_data)
         return active
 
-    # 无活跃 → 找空槽
+    # 无活跃 → 优先找普通槽(1-6)的空槽，再找RAID槽(7-11)的空槽
     for i in range(MAX_PRESETS):
         if presets[i] is None:
             presets[i] = {"battle_cards": list(battle), "assist_cards": list(assist)}
@@ -176,18 +199,37 @@ def load_preset(user_id: str, slot: int) -> bool:
     return True
 
 
+def copy_team(user_id: str, from_slot: int, to_slot: int) -> bool:
+    """复制队伍：将from_slot的内容复制到to_slot"""
+    if not (1 <= from_slot <= MAX_PRESETS and 1 <= to_slot <= MAX_PRESETS):
+        return False
+    if from_slot == to_slot:
+        return False
+    presets = load_presets(user_id)
+    src = presets.get("presets", [None] * MAX_PRESETS)
+    if src[from_slot - 1] is None:
+        return False
+    src[to_slot - 1] = dict(src[from_slot - 1])  # 深拷贝
+    presets["presets"] = src
+    save_presets(user_id, presets)
+    return True
+
+
 def list_presets_info(user_id: str, characters: list) -> str:
     """获取所有预设的摘要信息"""
+    characters = _ensure_char_dict(characters)
     presets_data = load_presets(user_id)
     presets = presets_data["presets"]
 
     active = presets_data.get("active_slot", 0)
-    lines = ["📋 队伍预设 (共6个槽位)："]
+    lines = ["📋 队伍预设 (共11个槽位，槽7-11为RAID)："]
     for i in range(MAX_PRESETS):
         p = presets[i]
-        marker = " ◀当前" if (i + 1) == active else ""
+        slot_num = i + 1
+        marker = " ◀当前" if slot_num == active else ""
+        raid_tag = " [RAID]" if slot_num >= 7 else ""
         if p is None:
-            lines.append(f"  槽{i+1}: 空{marker}")
+            lines.append(f"  槽{slot_num}{raid_tag}: 空{marker}")
         else:
             b_count = sum(1 for c in p.get("battle_cards", []) if c)
             a_count = sum(1 for c in p.get("assist_cards", []) if c)
@@ -198,7 +240,7 @@ def list_presets_info(user_id: str, characters: list) -> str:
                 chara = next((c for c in characters.values() if str(c.get("card_id")) == str(bc[0])), None)
                 if chara:
                     first_name = chara.get("name", "?")
-            lines.append(f"  槽{i+1}: ⚔{b_count}+🛡{a_count} [{first_name}...]")
+            lines.append(f"  槽{slot_num}{raid_tag}: ⚔{b_count}+🛡{a_count} [{first_name}...]{marker}")
     return "\n".join(lines)
 
 
@@ -226,6 +268,7 @@ def get_user_3star_cards(user_id: str, characters: dict = None,
     :param filter_color: 颜色筛选（红/绿/蓝/黄/紫），同时匹配超X版本
     :param filter_type: 类型筛选（"battle"或"assist"）
     """
+    characters = _ensure_char_dict(characters)
     pity_data = load_pity_data(user_id)
     card_collection = pity_data.get("card_collection", {})
 
@@ -281,67 +324,8 @@ def get_user_3star_cards(user_id: str, characters: dict = None,
     return three_star_cards
 
 
-def find_attribute_icon(attribute: str) -> str:
-    """根据属性名称查找属性图标文件"""
-    if not attribute:
-        return None
-    
-    attr_name = str(attribute).strip()
-    
-    # 中日文属性名称映射
-    attr_mapping = {
-        "红": "赤",
-        "绿": "緑",
-        "蓝": "青",
-        "黄": "黄",
-        "紫": "紫",
-        "超红": "超赤",
-        "超绿": "超緑",
-        "超蓝": "超青",
-        "超黄": "超黄",
-        "超紫": "超紫"
-    }
-    
-    # 尝试查找映射后的名称
-    mapped_attr = attr_mapping.get(attr_name, attr_name)
-    
-    patterns = [
-        f"common_tmb_label_element_{mapped_attr}.png",
-        f"common_tmb_label_element_{attr_name}.png",
-        f"attr_{attr_name}.png",
-        f"attribute_{attr_name}.png",
-        f"type_{attr_name}.png",
-        f"{attr_name}_attr.png",
-        f"{attr_name}.png"
-    ]
-    
-    for pattern in patterns:
-        path = LEVEL_DIR / pattern
-        if path.exists():
-            return str(path)
-    
-    return None
 
 
-def find_type_icon(card_type: str) -> str:
-    """根据卡牌类型查找Battle/Assist图标文件"""
-    if not card_type:
-        return None
-    
-    type_name = str(card_type).strip().lower()
-    
-    patterns = [
-        f"battle_{type_name}.png",
-        f"{type_name}_icon.png",
-        f"{type_name}.png"
-    ]
-    
-    for pattern in patterns:
-        path = LEVEL_DIR / pattern
-        if path.exists():
-            return str(path)
-    
-    return None
 
 
 # ========== 构建队伍图片 ==========
@@ -450,19 +434,6 @@ def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
     return bio.getvalue()
 
 
-def get_level_image(stars: int, layer_type: str) -> str:
-    """获取星级框或背景图片"""
-    star_idx = stars - 1
-    layer_idx = 0 if layer_type == "bg" else 1
-    
-    filename = f"gacha_tmb_{star_idx:02d}_{layer_idx:02d}"
-    if stars == 3 and layer_type == "bg":
-        filename += "_b"
-    
-    path = LEVEL_DIR / f"{filename}.png"
-    if path.exists():
-        return str(path)
-    return None
 
 
 def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_size: int = 50,
@@ -474,6 +445,7 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     :param filter_type: 类型筛选（"battle"或"assist"）
     :return: (图片路径, 当前页卡牌列表, 总页数)
     """
+    characters = _ensure_char_dict(characters)
     user_cards = get_user_3star_cards(user_id, characters,
                                        filter_color=filter_color,
                                        filter_type=filter_type)
@@ -597,16 +569,20 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     return str(img_path), current_page_cards, total_pages
 
 
-def build_team_image(team_data: dict, characters: list) -> str:
+def build_team_image(team_data: dict, characters: list, hp_data: dict = None) -> str:
     """
     构建队伍展示图片
     第一行：6个BattleCard
     第二行：6个AssistCard（与上方一一对应）
     背景为1920x1080，调整12张卡的位置使其舒适
+    :param hp_data: raid血量数据 {"hp": [3000, 0, ...], "alive": [True, False, ...]}
+                    非None时在A卡下方绘制简易血条
     """
+    characters = _ensure_char_dict(characters)
     battle_cards = team_data.get("battle_cards", [None] * BATTLE_CARD_COUNT)
     assist_cards = team_data.get("assist_cards", [None] * ASSIST_CARD_COUNT)
     
+    from PIL import ImageDraw
     # 获取卡牌图片
     battle_imgs = []
     assist_imgs = []
@@ -636,9 +612,9 @@ def build_team_image(team_data: dict, characters: list) -> str:
     if not battle_imgs and not assist_imgs:
         return None
     
-    # 固定背景尺寸：1920x1080
-    bg_width = 1920
-    bg_height = 1080
+    # 固定背景尺寸：1440x810
+    bg_width = 1440
+    bg_height = 810
     
     # 加载抽卡背景图
     bg_path = None
@@ -671,8 +647,8 @@ def build_team_image(team_data: dict, characters: list) -> str:
     gap_y = 40  # 垂直间距（战斗卡和支援卡之间）
     
     # 计算卡牌最大尺寸
-    available_width = bg_width - 100  # 左右各留50像素边距
-    available_height = bg_height - 150  # 上下各留75像素边距
+    available_width = bg_width - 80  # 左右各留40像素边距
+    available_height = bg_height - 120  # 上下各留60像素边距
     
     max_card_width = (available_width - gap_x * (cols - 1)) // cols
     max_card_height = (available_height - gap_y) // rows
@@ -708,6 +684,42 @@ def build_team_image(team_data: dict, characters: list) -> str:
         img_resized = img.resize((card_width, card_height), Image.Resampling.LANCZOS)
         output.paste(img_resized, (x, y))
     
+    # 绘制Raid血条（在A卡下方）
+    if hp_data and isinstance(hp_data, dict):
+        draw = ImageDraw.Draw(output)
+        hp_list = hp_data.get("hp", [])
+        alive_list = hp_data.get("alive", [])
+        maxhp_list = hp_data.get("max_hp", [])
+        bar_height = 6
+        bar_y_offset = 8  # A卡下方间距
+        for i in range(cols):
+            if i >= len(hp_list):
+                break
+            col = i % cols
+            bx = start_x + col * (card_width + gap_x)
+            by = start_y + card_height + gap_y + card_height + bar_y_offset
+            bw = card_width
+            # 背景（灰色）
+            draw.rectangle([bx, by, bx + bw, by + bar_height], fill=(80, 80, 80))
+            # 血条
+            if i < len(alive_list) and not alive_list[i]:
+                # 阵亡（红色）
+                draw.rectangle([bx, by, bx + bw, by + bar_height], fill=(200, 50, 50))
+            else:
+                # 存活，按HP/max_hp比例显示
+                cur_hp = hp_list[i] if i < len(hp_list) else 0
+                cur_max = maxhp_list[i] if i < len(maxhp_list) and maxhp_list[i] > 0 else 10000
+                pct = min(1.0, max(0.0, cur_hp / cur_max))
+                fill_w = max(1, int(bw * pct))
+                # 颜色：>50%绿色，>25%黄色，否则红色
+                if pct > 0.5:
+                    bar_color = (50, 200, 80)
+                elif pct > 0.25:
+                    bar_color = (200, 200, 50)
+                else:
+                    bar_color = (200, 80, 50)
+                draw.rectangle([bx, by, bx + fill_w, by + bar_height], fill=bar_color)
+    
     # 保存图片
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"team_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
@@ -721,6 +733,7 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
     构建双方对战配队图：玩家在上，敌方在下，中间VS图标
     紧凑布局，压缩输出
     """
+    characters = _ensure_char_dict(characters)
     battle_cards_p = player_team.get("battle_cards", [None] * BATTLE_CARD_COUNT)
     assist_cards_p = player_team.get("assist_cards", [None] * ASSIST_CARD_COUNT)
     battle_cards_e = enemy_team.get("battle_cards", [None] * BATTLE_CARD_COUNT)
@@ -851,7 +864,7 @@ def set_team_card(user_id: str, position: int, card_id: str, card_type: str = "b
     :param position: 位置（1-6）
     :param card_id: 卡牌ID
     :param card_type: battle或assist
-    :return: 是否成功
+    :return: 是否成功，-1表示RAID队伍重复角色
     """
     if position < 1 or position > 6:
         return False
@@ -877,6 +890,23 @@ def set_team_card(user_id: str, position: int, card_id: str, card_type: str = "b
             if i == idx + 6 and card_type == "assist":  # assist位置索引偏移
                 continue
             return False  # 卡牌已在其他位置使用
+
+    # RAID槽位（7-11）检查跨队伍重复角色
+    presets_data = load_presets(user_id)
+    active_slot = presets_data.get("active_slot", 0)
+    if 7 <= active_slot <= 11:
+        presets = presets_data.get("presets", [])
+        for slot_idx in range(6, min(len(presets), 11)):  # 槽位7-11（索引6-10）
+            if slot_idx == active_slot - 1:  # 跳过当前槽位
+                continue
+            other_preset = presets[slot_idx]
+            if not other_preset or not isinstance(other_preset, dict):
+                continue
+            other_bc = other_preset.get("battle_cards", [])
+            other_ac = other_preset.get("assist_cards", [])
+            for existing_id in other_bc + other_ac:
+                if existing_id and str(existing_id) == str(card_id):
+                    return -1  # RAID队伍不允许重复角色
 
     if card_type == "battle":
         team_data["battle_cards"][idx] = card_id
@@ -922,11 +952,16 @@ def clear_all_team(user_id: str):
 
 def get_team_info(user_id: str, characters: list) -> str:
     """获取队伍信息文本"""
+    characters = _ensure_char_dict(characters)
     team_data = load_team_data(user_id)
     battle_cards = team_data.get("battle_cards", [])
     assist_cards = team_data.get("assist_cards", [])
-    
-    info = "⚔️ 战斗卡（第1行）：\n"
+
+    # 检查当前活跃槽位是否为RAID槽(7-11)
+    active = _get_active_slot(user_id)
+    raid_tag = " [RAID]" if 7 <= active <= 11 else ""
+
+    info = f"⚔️ 战斗卡（第1行）{raid_tag}：\n"
     for i, card_id in enumerate(battle_cards, 1):
         if card_id:
             chara = next((c for c in characters.values() if str(c.get("card_id")) == str(card_id)), None)
@@ -961,13 +996,14 @@ def get_team_info(user_id: str, characters: list) -> str:
     return info
 
 
-def auto_build_team(user_id: str, characters: list) -> dict:
+def auto_build_team(user_id: str, characters: list, check_raid_duplicates: bool = False) -> dict:
     """
     自动配队：AI自动配队
     核心原则：同色+同攻击类型 >> 其他，尽可能塞满6个位置
     优先三星卡，不足时用低星卡填充
     :return: 配队结果 {"success": bool, "message": str, "team": dict}
     """
+    characters = _ensure_char_dict(characters)
     # 获取用户全部卡牌（按星级排序，三星优先）
     pity_data = load_pity_data(user_id)
     card_collection = pity_data.get("card_collection", {})
@@ -1051,6 +1087,23 @@ def auto_build_team(user_id: str, characters: list) -> dict:
             battle_cards.append(card_info)
         else:
             assist_cards.append(card_info)
+
+    # ===== RAID去重：排除已被其他RAID队使用的卡牌 =====
+    if check_raid_duplicates:
+        used_cards = set()
+        presets = load_presets(user_id)
+        for slot_idx in range(6, MAX_PRESETS):  # 槽位7-11
+            preset = presets["presets"][slot_idx] if slot_idx < len(presets["presets"]) else None
+            if preset:
+                for c in preset.get("battle_cards", []) or []:
+                    if c:
+                        used_cards.add(str(c))
+                for c in preset.get("assist_cards", []) or []:
+                    if c:
+                        used_cards.add(str(c))
+        # 从可选卡牌中排除已用卡牌
+        battle_cards = [c for c in battle_cards if str(c["card_id"]) not in used_cards]
+        assist_cards = [c for c in assist_cards if str(c["card_id"]) not in used_cards]
 
     if not battle_cards:
         return {"success": False, "message": "没有战斗卡（Battle Card）！", "team": None}
@@ -1327,6 +1380,7 @@ def get_defense_team(user_id: str) -> dict:
 
 def get_defense_team_info(user_id: str, characters: list) -> str:
     """获取防守队信息文本"""
+    characters = _ensure_char_dict(characters)
     defense_slot = get_defense_slot(user_id)
     team = get_defense_team(user_id)
     battle_cards = team.get("battle_cards", [])

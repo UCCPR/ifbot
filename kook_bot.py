@@ -601,6 +601,25 @@ def load_battle_characters():
     except Exception as e:
         log_error(f"加载战斗数据失败: {e}")
 
+def _atomic_json_save(file_path: Path, data):
+    """原子写入 JSON：先写临时文件再 rename，防止崩溃损坏数据"""
+    import tempfile
+    file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd, tmp_path = tempfile.mkstemp(
+            suffix='.json', prefix='tmp_', dir=str(file_path.parent))
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, file_path)
+        except:
+            os.unlink(tmp_path)
+            raise
+    except OSError:
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
 def get_user_data_path(user_id):
     return INFO_DIR / f"gacha_{user_id}.json"
 
@@ -650,8 +669,7 @@ def save_user_data(user_id):
     user_id = str(user_id)
     if user_id in USER_DATA:
         file_path = get_user_data_path(user_id)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(USER_DATA[user_id], f, ensure_ascii=False, indent=2)
+        _atomic_json_save(file_path, USER_DATA[user_id])
 
 def get_pity_data_path(user_id):
     return INFO_DIR / f"pity_{user_id}.json"
@@ -808,8 +826,7 @@ def load_gacha_data(user_id: str) -> dict:
 def save_gacha_data(user_id: str, data: dict):
     """保存用户的呱太数据"""
     gacha_file = get_gacha_file(user_id)
-    with open(gacha_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _atomic_json_save(gacha_file, data)
 
 def get_gacha_count(user_id: str) -> int:
     """获取用户的呱太数量"""
@@ -852,8 +869,7 @@ def load_signin_data(user_id: str) -> dict:
 def save_signin_data(user_id: str, data: dict):
     """保存用户的签到数据"""
     signin_file = get_signin_file(user_id)
-    with open(signin_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    _atomic_json_save(signin_file, data)
 
 def can_signin(user_id: str) -> bool:
     """检查用户今天是否可以签到"""
@@ -915,8 +931,7 @@ def save_pity_data(user_id):
     user_id = str(user_id)
     if user_id in PITY_DATA:
         file_path = get_pity_data_path(user_id)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(PITY_DATA[user_id], f, ensure_ascii=False, indent=2)
+        _atomic_json_save(file_path, PITY_DATA[user_id])
 
 def save_rolling_battle_log(user_id, result):
     """保存战斗日志，只保留最近3次（与QQ版一致）"""
@@ -936,8 +951,7 @@ def save_rolling_battle_log(user_id, result):
     logs.insert(0, result)
     logs = logs[:3]
     
-    with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(logs, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(log_path, logs)
     
     return f"battle_{user_id} (共{len(logs)}次)"
 
@@ -1007,8 +1021,7 @@ def load_ranking_data():
 def save_ranking_data():
     """保存排行榜数据（与QQ版一致）"""
     file_path = INFO_DIR / "ranking.json"
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(RANKING_DATA, f, ensure_ascii=False, indent=2)
+    _atomic_json_save(file_path, RANKING_DATA)
 
 def send_kook_message(channel_id, content, files=None, quote_msg_id=None):
     """
@@ -3386,13 +3399,14 @@ def handle_gacha_leaderboard(user_id, channel_id, msg_id=None):
         send_kook_message(channel_id, f"查询抽卡榜单失败: {str(e)}", quote_msg_id=msg_id)
 
 def calculate_power(user_id) -> int:
-    """计算用户战力：フェス限定数*10 + 期間限定数*8 + 其他三星数*7 + 二星数*3"""
+    """计算用户战力：フェス限定数*10 + 期間限定数*8 + 其他三星数*7 + 二星数*3 + rank_adjustment"""
     user_data = load_user_data(user_id)
     fes = user_data.get("fes_count", 0)
     period = user_data.get("period_count", 0)
     other_3star = user_data.get("other_3star_count", 0)
     two_star = user_data.get("total_2stars", 0)
-    return fes * 10 + period * 8 + other_3star * 7 + two_star * 3
+    rank_adjustment = user_data.get("rank_adjustment", 0)
+    return fes * 10 + period * 8 + other_3star * 7 + two_star * 3 + rank_adjustment
 
 def get_leaderboard() -> list:
     """获取排行榜（战力前10名）"""
@@ -3812,6 +3826,8 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
     处理挑战排名请求
     命令格式: 挑战排名 <排名>
     挑战排行榜上指定排名的玩家
+    排名限制：只能挑战比自己高且不超过3位的对手
+    挑战胜利后交换双方排名位置（通过 rank_adjustment 实现）
     """
     try:
         import re
@@ -3833,6 +3849,33 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
         if target_rank > len(leaderboard):
             send_kook_message(channel_id, f"排行榜只有 {len(leaderboard)} 位玩家！", quote_msg_id=msg_id)
             return
+        
+        # 查找挑战者自己在排行榜中的排名
+        player_rank = None
+        for i, player in enumerate(leaderboard):
+            if player["user_id"] == user_id:
+                player_rank = i + 1  # 排名从1开始
+                break
+        
+        # 排名限制检查
+        if player_rank is not None:
+            # 挑战者在排行榜中，只能挑战比自己高且不超过3位的对手
+            min_challenge_rank = max(1, player_rank - 3)
+            if target_rank < min_challenge_rank or target_rank >= player_rank:
+                send_kook_message(channel_id,
+                    f"只能挑战排名比你高且不超过3位的对手！\n"
+                    f"你的排名: 第{player_rank}名\n"
+                    f"可挑战排名: 第{min_challenge_rank}-{player_rank - 1}名",
+                    quote_msg_id=msg_id)
+                return
+        else:
+            # 挑战者不在排行榜中，只能挑战排名靠后的对手
+            if target_rank < max(1, len(leaderboard) - 2):
+                send_kook_message(channel_id,
+                    f"你还未进入排行榜，只能挑战排名靠后的对手！\n"
+                    f"可挑战排名: 第{max(1, len(leaderboard) - 2)}-{len(leaderboard)}名",
+                    quote_msg_id=msg_id)
+                return
         
         # 获取目标玩家
         target_player = leaderboard[target_rank - 1]
@@ -3874,12 +3917,13 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
         # 发送战斗开始消息
         send_kook_message(channel_id, f"⚔️ 挑战排名第{target_rank}位的 {target_user_id}！", quote_msg_id=msg_id)
         
-        # 执行战斗
+        # 执行战斗（挑战上限15回合）
         log_info(f"挑战排名开始: {user_id} vs {target_user_id}")
         result = BATTLE_INSTANCE.start_battle(
             attacker_team,
             defender_team,
-            extra_characters={**CHARACTERS, **BATTLE_CHARACTERS}
+            extra_characters={**CHARACTERS, **BATTLE_CHARACTERS},
+            max_rounds=15
         )
         
         # 保存战斗日志（只保留最后一次）
@@ -3894,15 +3938,24 @@ def handle_challenge(user_id, channel_id, raw_message, msg_id=None):
             "enemy_units": result.get("enemy_units", []),
             "parsable_log": result.get("parsable_log", [])
         }]
-        save_user_data(user_id)
         
         # 格式化结果
         rounds = result.get("rounds", 0)
         player_win = result.get("player_win", False)
         
+        # 排名交换逻辑：胜利后交换双方排名位置
+        # 使用 rank_adjustment 字段：胜利者 +1，失败者 -1（动态排行榜适配）
         if player_win:
+            attacker_data["rank_adjustment"] = attacker_data.get("rank_adjustment", 0) + 1
+            defender_data["rank_adjustment"] = defender_data.get("rank_adjustment", 0) - 1
+            # 确保失败者的调整不低于-10
+            if defender_data["rank_adjustment"] < -10:
+                defender_data["rank_adjustment"] = -10
+            save_user_data(user_id)
+            save_user_data(target_user_id)
             result_text = f"🎉 挑战成功！击败了排名第{target_rank}位的 {target_user_id}\n战斗回合: {rounds}"
         else:
+            save_user_data(user_id)
             result_text = f"💔 挑战失败！输给了排名第{target_rank}位的 {target_user_id}\n战斗回合: {rounds}"
         
         # 如果开启了GIF渲染器，生成战斗GIF
@@ -3963,6 +4016,13 @@ def handle_boss_battle(user_id, channel_id, raw_message, msg_id=None):
 
         # 执行BOSS战
         log_info(f"BOSS战开始: {user_id} vs BOSS({BOSS_CARD_ID} {boss_name})")
+
+        # 清理超过24小时的过期冷却条目（防止内存泄漏）
+        now_ts = datetime.now().timestamp()
+        expired_ids = [uid for uid, ts in BOSS_BATTLE_COOLDOWN.items() if now_ts - ts > 86400]
+        for uid in expired_ids:
+            del BOSS_BATTLE_COOLDOWN[uid]
+
         BOSS_BATTLE_COOLDOWN[user_id] = datetime.now().timestamp()
         result = BATTLE_INSTANCE.start_boss_battle(
             player_team, str(BOSS_CARD_ID), initial_sp=300,

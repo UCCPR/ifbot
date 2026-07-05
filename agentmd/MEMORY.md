@@ -1,19 +1,18 @@
-- [项目状态](project-state.md) — 幻想收束KOOK Bot完整项目状态：战斗系统、GIF渲染、A卡技能、抽卡系统、KOOK集成、CDKEY兑换、队伍卡筛选
+- [项目状态](project-state.md) — 幻想收束KOOK/QQ Bot完整项目状态：战斗系统、GIF渲染、A卡技能、抽卡系统、KOOK/QQ集成、代码重构记录
 - [战斗系统触发条件更新](battle-system-trigger-update.md) — 2026-06-21/22 A卡29种触发条件全接入、日志帧补全、状态去重、P2替补位置修复
 - [GIF渲染器0622修复](gif-renderer-0622-fixes.md) — 2026-06-22 攻击内A卡事件文本修复、retreat帧处理器新增
 - [过夜宕机修复](overnight-crash-fixes.md) — 2026-06-19 全面稳定化：17项修复覆盖崩溃/数据损坏/重复消息/双进程/隧道时序/GIF渲染
 - [GIF渲染器修复记录](gif-renderer-fixes.md) — 2026-06-18一轮修复：攻击帧HP同步、特殊效果可视化、初始帧清BUFF、战斗结束败方全灭、阵亡清场替补替换、SP条实时显示
 - [QQ机器人WebSocket版部署指南](qq-bot-ws-guide.md) — botpy官方SDK部署：群聊被动回复、Cloudflare图片隧道、openid用户系统、24/7 systemd服务、防去重策略
-- 项目总代码量: ~23,000行 (6个主力文件) — 2026-06-20
-- systemd 服务: qqbot.service + qqbot-tunnel.service (qqbot-image已删除，图片服务由Bot内置)
-- `setup_services.sh` 最终版: Bot先启→隧道后启→journalctl --since限时取URL→Bot动态读配置无需重启
-- `status.sh` 一键检查: PID锁/进程/端口/隧道/服务全貌
-- GIF buff图标已统一为 battle_system.BUFF_ICON_MAP 单一数据源
-- 管理员命令: @Bot 数量呱太/蓝碎片/红碎片 @用户, 全榜替 OpenID QQ号, @Bot 挑战 @玩家
-- 排行榜每日结算: 12:00结算前三名真人玩家45000/35000/25000呱太，AI跳过，离线补结，个人记录可查获奖历史 (`info/ranking_rewards.json`)
-- 队伍我的卡筛选(2026-06-20): `队伍 我的卡 红/绿/蓝/黄/紫/超红.../B/A`，xlsx赤/緑/青自动映射，筛选状态保持翻页
-- CDKEY兑换(2026-06-20): `兑换 CODE`，config.py配置CDKEYS字典，每用户每KEY限一次，增量发放，atomic_save安全
-- 碎片分色兑换(2026-06-20): `兑换红碎片`/`兑换蓝碎片` 分别兑，`兑换` 兑全部，handle_exchange_crystal支持crystal_type参数
-- 数据安全原则: 全量load→修改特定字段→_atomic_json_save(临时文件+rename)，绝不全量覆盖
-- DAU统计(dau_log.json): 每条消息触发save_daily_stats()写入当日dau+send，启动时restore_daily_stats()恢复。06-17/06-18缺失是因为06-19前Bot崩溃bug导致宕机，修复后06-19恢复正常
-- info2/data合并: info2有06-08~06-16的dau/send数据，已与服务器tar.gz(06-19~06-20)合并为完整dau_log.json。06-17/06-18永久丢失。fes_stats/ranking用服务器最新版。send_stats两边一致(止于06-13)
+- [QQ官方bot @提及失效修复](qq-official-mention-fix.md) — 2026-06-24 QQ官方群消息API不暴露@数据，改为openid文本格式
+- [图床ThreadingHTTPServer修复](image-server-threading-fix.md) — 2026-06-26 图床稳定性修复：HTTPServer→ThreadingHTTPServer+超时+健康自检
+- [战斗系统全面修复](battle-system-comprehensive-fixes.md) — 2026-07-02 22项修复：除零保护、替补位置溢出、退场A卡position备份、P7 SP检查、一对角色排序、GIF帧补全、RGBA半透明、macOS字体、KOOK原子写入、挑战排名交换、BOSS冷却清理等
+- 项目总代码量: ~17,700行 (8个主力文件, 含3个历史版本) — 2026-06-29
+- 主力7文件: ~13,200行 (qq_bot_ws 4,390 / battle_system ~3,250 / gacha_bot 5,099 / gif_renderer ~1,700 / team_system 1,280 / ranking 1,191 / box_system 487 / card_image 249 / kook_bot ~4,500)
+- 2026-06-29重构: 三个攻击方法合并为_execute_attack_core、start_battle去重(P10/P3提取)、GIF入口合并、qq_bot_ws拆分为4模块(box/ranking/card_image)、elif→if-return路由、_at_user去重、删除fallback stub。全部验证通过(输出hash d041cca7bff9891f与原版一致)
+- systemd 服务: qqbot.service + qqbot-tunnel.service
+- 排行榜每日结算: 12:00结算前三名真人玩家45000/35000/25000呱太
+- 数据安全原则: 全量load→修改特定字段→_atomic_json_save(临时文件+rename)，绝不全量覆盖（KOOK端也已实现原子写入）
+- CDKEY兑换: `兑换 CODE`，config.py配置CDKEYS字典，每用户每KEY限一次
+- DAU统计(dau_log.json): 每条消息触发save_daily_stats()写入当日dau+send
+- 盲盒取消退款限制: 已开过盲盒则不退款（2026-07-02）
