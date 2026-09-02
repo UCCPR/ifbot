@@ -1,7 +1,13 @@
 # TOARU Bot - 幻想收束的模拟抽卡bot
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
-![License](https://img.shields.io/badge/License-Apache%202.0-blue)
+![QQ Bot](https://img.shields.io/badge/QQ-Bot-12B7F5?logo=tencentqq&logoColor=white)
+![WebSocket](https://img.shields.io/badge/API-WebSocket-010101?logo=socketdotio&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey)
+![License](https://img.shields.io/github/license/UCCPR/ifbot)
+
+![Repo Size](https://img.shields.io/github/repo-size/UCCPR/ifbot)
+![Stars](https://img.shields.io/github/stars/UCCPR/ifbot?style=flat)
 
 《魔法禁书目录 幻想收束》抽卡、配队与战斗模拟机器人。当前主要运行方式是基于 QQ 官方 Bot API 的 WebSocket 客户端，同时保留 NapCat、QQ 回调和 KOOK 入口。
 
