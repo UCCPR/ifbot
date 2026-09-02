@@ -19,6 +19,7 @@ import zlib
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from storage_maintenance import append_rotating_log, cleanup_storage
 
 try:
     from Crypto.Cipher import AES
@@ -276,15 +277,13 @@ BOSS_BATTLE_COOLDOWN = {}
 def log_info(message: str):
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "kook_bot.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] {message}\n")
     print(f"[INFO] {message}", flush=True)
 
 def log_error(message: str):
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "kook_error.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] ERR {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] ERR {message}\n")
     print(f"[ERROR] {message}", flush=True)
 
 # ========== 抽卡记录备份模块（与QQ版一致）==========
@@ -370,7 +369,7 @@ def backup_pity_records():
         print(f"[ERROR] 抽卡记录备份失败: {e}")
         return False
 
-def load_config():
+def reload_config():
     config_path = BASE_DIR / "config.json"
     if config_path.exists():
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -877,29 +876,6 @@ def can_signin(user_id: str) -> bool:
     last_signin = signin_data.get("last_signin", "")
     today = datetime.now().strftime("%Y-%m-%d")
     return last_signin != today
-
-def signin(user_id: str) -> dict:
-    """执行签到（与QQ版一致），返回结果"""
-    signin_data = load_signin_data(user_id)
-    today = datetime.now().strftime("%Y-%m-%d")
-    
-    if signin_data.get("last_signin") == today:
-        return {"success": False, "message": "今日已签到"}
-    
-    streak = signin_data.get("streak", 0) + 1
-    total_days = signin_data.get("total_days", 0) + 1
-    
-    signin_data["last_signin"] = today
-    signin_data["streak"] = streak
-    signin_data["total_days"] = total_days
-    
-    save_signin_data(user_id, signin_data)
-    
-    # 添加签到奖励（与QQ版一致）
-    add_gacha(user_id, CONFIG["DAILY_REWARD"])
-    current_gacha = get_gacha_count(user_id)
-    
-    return {"success": True, "streak": streak, "total_days": total_days, "gacha": current_gacha}
 
 def get_defense_slot(user_id):
     """获取用户的防守队预设槽位"""
@@ -4545,12 +4521,13 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 def main():
-    load_config()
+    reload_config()
     
     if not CONFIG["BOT_TOKEN"] or CONFIG["BOT_TOKEN"] == "YOUR_KOOK_BOT_TOKEN":
         print("请先在 config.json 中设置 KOOK Bot Token！")
         return
     
+    cleanup_storage(BASE_DIR)
     backup_pity_records()
     
     load_characters()

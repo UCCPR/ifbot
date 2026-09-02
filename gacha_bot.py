@@ -16,6 +16,7 @@ import requests
 from flask import Flask, request, jsonify
 from PIL import Image
 import openpyxl
+from storage_maintenance import append_rotating_log, cleanup_storage
 
 # 导入配队系统（延迟到log_info定义后再记录日志）
 try:
@@ -104,8 +105,7 @@ def log_info(message: str):
     """记录普通信息"""
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_info.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] {message}\n")
     print(f"[INFO] {message}", flush=True)
 
 
@@ -113,8 +113,7 @@ def log_error(message: str):
     """记录错误信息"""
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_error.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] ERR {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] ERR {message}\n")
     print(f"[ERROR] {message}", flush=True)
 
 
@@ -3955,6 +3954,26 @@ def save_rolling_battle_log(user_id: str, result: dict) -> str:
     logs = [result]
     with open(log_path, "w", encoding="utf-8") as f:
         json.dump(logs, f, ensure_ascii=False, indent=2)
+
+    # 同时保存纯文本版本到static_images，通过HTTP 18080端口暴露
+    log_dir = BASE_DIR / "static_images" / "battle_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = log_dir / f"{user_id}.txt"
+    lines = ["=" * 50, f"战斗日志 - {result['saved_at']}"]
+    battle_log = result.get("log", [])
+    if isinstance(battle_log, list):
+        for entry in battle_log:
+            if isinstance(entry, bytes):
+                entry = entry.decode('utf-8', errors='replace')
+            lines.append(str(entry))
+    else:
+        lines.append(str(battle_log))
+    lines.append("=" * 50)
+    try:
+        txt_path.write_text("\n".join(lines), encoding="utf-8")
+    except Exception:
+        pass  # 文本日志保存失败不影响主流程
+
     return f"battle_{user_id} (共1次)"
 
 
@@ -5552,6 +5571,7 @@ if __name__ == '__main__':
     log_info("=" * 50)
 
     # 每天第一次启动时备份抽卡记录
+    cleanup_storage(BASE_DIR)
     backup_pity_records()
 
     # 预加载抽卡角色数据

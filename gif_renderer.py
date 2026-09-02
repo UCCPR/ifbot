@@ -12,6 +12,7 @@ import copy
 import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from image_cache import get_rendered_image, load_shared_image, put_rendered_image
 
 BASE_DIR = Path(__file__).parent
 ICON_DIR = BASE_DIR / "iconimage"
@@ -28,6 +29,8 @@ ICON_GAP = 2
 HP_BAR_HEIGHT = 16
 SECTION_SPACING = 60
 PADDING = 20
+GIF_MAX_COLORS = 96
+GIF_MAX_FRAMES = 80
 
 COLOR_HP_HIGH = (50, 200, 50)
 COLOR_HP_MEDIUM = (200, 180, 50)
@@ -54,7 +57,11 @@ CROP_TOP_RATIO = 0.15
 CROP_BOTTOM_RATIO = 0.65
 
 _CACHED_FONT = {}
-_CACHED_FRAMES = {}
+
+
+def _load_rgba_asset(path):
+    """共享加载小型素材；1024×1024 角色原图不会进入常驻缓存。"""
+    return load_shared_image(path, 'RGBA')
 
 def _get_font(size):
     font_key = f"font_{size}"
@@ -121,10 +128,6 @@ def _get_font(size):
     return font
 
 def _get_frame_image(frame_type, stars=3):
-    cache_key = f"{frame_type}_{stars}"
-    if cache_key in _CACHED_FRAMES:
-        return _CACHED_FRAMES[cache_key]
-    
     paths = {
         "outer": LEVEL_DIR / "gacha_tmb_frame.png",
         "inner_1": LEVEL_DIR / "gacha_tmb_02_01.png",
@@ -142,9 +145,7 @@ def _get_frame_image(frame_type, stars=3):
         path = paths["inner_3"]
     
     if path.exists():
-        img = Image.open(str(path)).convert('RGBA')
-        _CACHED_FRAMES[cache_key] = img
-        return img
+        return _load_rgba_asset(path)
     return None
 
 def _find_character_icon(chara_id):
@@ -258,7 +259,7 @@ def _extract_base_name(name):
     name = re.sub(r'【[^】]+】', '', name)
     return name.strip()
 
-def _render_character_card(unit, card_w, card_h):
+def _render_character_card_uncached(unit, card_w, card_h):
     output = Image.new('RGBA', (card_w, card_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(output)
 
@@ -277,7 +278,7 @@ def _render_character_card(unit, card_w, card_h):
     
     if icon_path and os.path.exists(icon_path):
         try:
-            char_img = Image.open(icon_path).convert('RGBA')
+            char_img = _load_rgba_asset(icon_path)
             char_width, char_height = char_img.size
             crop_left = int(char_width * CROP_LEFT_RATIO)
             crop_right = int(char_width * CROP_RIGHT_RATIO)
@@ -350,6 +351,31 @@ def _render_character_card(unit, card_w, card_h):
     
     return output
 
+
+def _render_character_card(unit, card_w, card_h):
+    """缓存 GIF 中重复出现的静态角色卡面。"""
+    alive = unit.get("alive", True)
+    if isinstance(alive, str):
+        alive = alive.lower() == 'true'
+    card_id = str(unit.get("card_id", ""))
+    fallback_name = "" if card_id else str(unit.get("name", ""))
+    cache_key = (
+        bool(unit.get("is_empty", False)),
+        card_id,
+        fallback_name,
+        int(unit.get("stars", 3)),
+        bool(alive),
+        int(card_w),
+        int(card_h),
+    )
+    cached = get_rendered_image("gif_character_card", cache_key)
+    if cached is not None:
+        return cached
+
+    rendered = _render_character_card_uncached(unit, card_w, card_h)
+    put_rendered_image("gif_character_card", cache_key, rendered)
+    return rendered
+
 def _render_buff_icons(canvas, x, y, buffs, debuffs, max_width):
     icons = []
     if not isinstance(buffs, list): buffs = []
@@ -380,8 +406,13 @@ def _render_buff_icons(canvas, x, y, buffs, debuffs, max_width):
             break
         
         try:
-            icon_img = Image.open(icon_path).convert('RGBA')
-            icon_img = icon_img.resize((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
+            icon_key = (os.path.abspath(icon_path), ICON_SIZE)
+            icon_img = get_rendered_image("gif_state_icon", icon_key)
+            if icon_img is None:
+                icon_img = _load_rgba_asset(icon_path).resize(
+                    (ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS
+                )
+                put_rendered_image("gif_state_icon", icon_key, icon_img)
             canvas.paste(icon_img, (ix, iy), icon_img)
         except (IOError, OSError):
             draw = ImageDraw.Draw(canvas)
@@ -485,6 +516,47 @@ def _render_sp_bars(draw, x, y, w, player_sp, enemy_sp, max_sp=300):
     return y + bar_h  # 返回SP条区域底部的y坐标
 
 
+def _quantize_gif_frame(frame, colors=GIF_MAX_COLORS):
+    return frame.quantize(
+        colors=colors,
+        method=Image.Quantize.FASTOCTREE,
+        dither=Image.Dither.NONE,
+    )
+
+
+def _limit_gif_frames(frames_data, max_frames=GIF_MAX_FRAMES):
+    """限制长战斗帧数，优先保留攻击、换位、退场与回合边界。"""
+    if len(frames_data) <= max_frames:
+        return frames_data
+    important_phases = {
+        "attack", "enter", "swap", "retreat", "hp_threshold",
+        "round_start", "turn_switch", "battle_end",
+    }
+    selected = {0, len(frames_data) - 1}
+    important = [
+        index for index, frame in enumerate(frames_data)
+        if str(frame.get("phase", "")) in important_phases
+    ]
+    available = max_frames - len(selected)
+    if len(important) > available:
+        important = [
+            important[round(i * (len(important) - 1) / max(1, available - 1))]
+            for i in range(available)
+        ]
+    selected.update(important)
+    remaining = max_frames - len(selected)
+    candidates = [i for i in range(1, len(frames_data) - 1) if i not in selected]
+    if remaining > 0 and candidates:
+        if len(candidates) <= remaining:
+            selected.update(candidates)
+        else:
+            selected.update(
+                candidates[round(i * (len(candidates) - 1) / max(1, remaining - 1))]
+                for i in range(remaining)
+            )
+    return [frames_data[index] for index in sorted(selected)[:max_frames]]
+
+
 def _render_team_section(field_units, hp_changes, attack_directions, is_enemy=False):
     card_w = CARD_WIDTH
     card_h = CARD_HEIGHT
@@ -533,6 +605,19 @@ def _render_team_section(field_units, hp_changes, attack_directions, is_enemy=Fa
         card = _render_character_card(unit, card_w, card_h)
         card_y = icon_area_h
         frame.paste(card, (x, card_y), card)
+
+        # 连携单位与携带者同列，用右上角小卡叠放展示，避免直接丢失其画面状态。
+        stacked_units = unit.get("stacked_units", [])
+        for stack_idx, stacked in enumerate(stacked_units[:2]):
+            mini_w, mini_h = 34, 43
+            mini = _render_character_card(stacked, mini_w, mini_h)
+            mini_x = x + card_w - mini_w - 2 - stack_idx * 8
+            mini_y = card_y + 2 + stack_idx * 8
+            frame.paste(mini, (mini_x, mini_y), mini)
+            draw.rectangle(
+                [mini_x - 1, mini_y - 1, mini_x + mini_w, mini_y + mini_h],
+                outline=(255, 215, 80), width=1
+            )
 
         hp_y = card_y + card_h + 3
 
@@ -856,8 +941,224 @@ def _parse_battle_log(log, player_units_raw, enemy_units_raw):
     
     return frames_data
 
+def _visual_state_signature(state):
+    """只比较 GIF 真正能呈现的状态，用于消除相同帧。"""
+    parts = [state.get("player_sp", 0), state.get("enemy_sp", 0)]
+    for side_key in ("player_units", "enemy_units"):
+        units = sorted(state.get(side_key, []), key=lambda u: u.get("unit_id", ""))
+        for unit in units:
+            buffs = tuple(sorted(
+                (b.get("name", ""), b.get("magnitude", ""), b.get("charges", 0))
+                for b in unit.get("buffs", [])
+            ))
+            debuffs = tuple(sorted(
+                (d.get("name", ""), d.get("magnitude", ""), d.get("charges", 0))
+                for d in unit.get("debuffs", [])
+            ))
+            parts.append((
+                unit.get("unit_id"), unit.get("position", -1), unit.get("hp", 0),
+                unit.get("max_hp", 1), bool(unit.get("alive", True)),
+                bool(unit.get("is_broken", False)), buffs, debuffs,
+                unit.get("carrying_id"), unit.get("carried_by_id"),
+            ))
+    return tuple(parts)
+
+
+def _snapshot_unit_map(state):
+    result = {}
+    for key in ("player_units", "enemy_units"):
+        for unit in state.get(key, []):
+            result[unit.get("unit_id")] = unit
+    return result
+
+
+def _state_change_summary(before, after):
+    """生成该事件真正造成的可视变化摘要。"""
+    before_map = _snapshot_unit_map(before)
+    after_map = _snapshot_unit_map(after)
+    changes = []
+    for unit_id, current in after_map.items():
+        previous = before_map.get(unit_id, {})
+        name = _extract_base_name(current.get("name", "")) or unit_id
+        hp_delta = int(current.get("hp", 0)) - int(previous.get("hp", current.get("hp", 0)))
+        if hp_delta:
+            changes.append(f"{name} HP{hp_delta:+d}")
+        old_pos = previous.get("position", current.get("position", -1))
+        new_pos = current.get("position", -1)
+        if old_pos != new_pos:
+            changes.append(f"{name} {old_pos}→{new_pos}")
+        if bool(previous.get("alive", True)) != bool(current.get("alive", True)):
+            changes.append(f"{name}{'退场' if not current.get('alive', True) else '入场'}")
+
+        old_buffs = {(b.get("name", ""), b.get("magnitude", ""), b.get("charges", 0))
+                     for b in previous.get("buffs", [])}
+        new_buffs = {(b.get("name", ""), b.get("magnitude", ""), b.get("charges", 0))
+                     for b in current.get("buffs", [])}
+        old_debuffs = {(d.get("name", ""), d.get("magnitude", ""), d.get("charges", 0))
+                       for d in previous.get("debuffs", [])}
+        new_debuffs = {(d.get("name", ""), d.get("magnitude", ""), d.get("charges", 0))
+                       for d in current.get("debuffs", [])}
+        for effect in sorted(new_buffs - old_buffs):
+            changes.append(f"{name} +{effect[0]}")
+        for effect in sorted(old_buffs - new_buffs):
+            changes.append(f"{name} -{effect[0]}")
+        for effect in sorted(new_debuffs - old_debuffs):
+            changes.append(f"{name} +{effect[0]}")
+        for effect in sorted(old_debuffs - new_debuffs):
+            changes.append(f"{name} -{effect[0]}")
+        if previous.get("carried_by_id") != current.get("carried_by_id"):
+            changes.append(f"{name} {'形成连携' if current.get('carried_by_id') else '解除连携'}")
+
+    p_sp_delta = int(after.get("player_sp", 0)) - int(before.get("player_sp", 0))
+    e_sp_delta = int(after.get("enemy_sp", 0)) - int(before.get("enemy_sp", 0))
+    if p_sp_delta:
+        changes.append(f"P-SP{p_sp_delta:+d}")
+    if e_sp_delta:
+        changes.append(f"E-SP{e_sp_delta:+d}")
+    return changes
+
+
+def _snapshot_to_field(state, side):
+    key = "player_units" if side == "P" else "enemy_units"
+    arrows = COL_TO_ARROW_P if side == "P" else COL_TO_ARROW_E
+    fields = [{
+        "is_empty": True, "name": "", "hp": 0, "max_hp": 1,
+        "alive": True, "position": pos, "buffs": [], "debuffs": [],
+        "base_name": "", "card_id": "", "stars": 0, "unit_id": "",
+    } for pos in range(5)]
+
+    for raw in state.get(key, []):
+        pos = int(raw.get("position", -1))
+        if not 0 <= pos < 5:
+            continue
+        unit = copy.deepcopy(raw)
+        base_name = _extract_base_name(unit.get("name", ""))
+        unit["base_name"] = base_name
+        unit["name"] = f"{base_name}[{arrows.get(pos, '')}]"
+        unit["hp_change"] = 0
+        unit["is_empty"] = False
+        existing = fields[pos]
+        if existing.get("is_empty"):
+            fields[pos] = unit
+        else:
+            # 连携会让两个单位处于同列：携带者作为主卡，被携带者作为叠放卡。
+            if unit.get("carrying_id") and not existing.get("carrying_id"):
+                unit["stacked_units"] = [existing]
+                fields[pos] = unit
+            else:
+                existing.setdefault("stacked_units", []).append(unit)
+    return fields
+
+
+def _event_title(entry, changes):
+    event_type = entry.get("type", "event")
+    content = str(entry.get("content") or "").strip()
+    titles = {
+        "round_start": f"第{entry.get('round', '?')}回合",
+        "turn_switch": "我方行动" if entry.get("side") == "player" else "敌方行动",
+        "sp_info": "SP变化",
+        "swap": "换位",
+        "enter": "替补入场",
+        "combo_form": "形成连携",
+        "attack": {"普": "普通攻击", "技": "技能", "终": "必杀"}.get(entry.get("attack_type"), "攻击"),
+        "assist_trigger": "A卡触发",
+        "trigger": "效果触发",
+        "hp_threshold": "HP阈值触发",
+        "dot_damage": "持续伤害",
+        "buff_expiry": "状态到期",
+        "debuff_trigger": "弱体触发",
+        "stun_recover": "无法行动",
+        "retreat": "退场",
+        "battle_end": "战斗结束",
+    }
+    title = titles.get(event_type, content or event_type)
+    if event_type == "attack" and entry.get("attacker"):
+        title = f"{_extract_base_name(entry.get('attacker', ''))}: {title}"
+    detail = " | ".join(changes[:4])
+    return f"{title} | {detail}" if detail else title
+
+
+def _parse_snapshot_log(parsable_log):
+    """GIF v2：完全依据战斗引擎提供的 before/after 快照生成帧。"""
+    frames = []
+    round_num = 1
+    turn = "player"
+    last_signature = None
+
+    def append_state(state, phase, event_text, entry=None, before=None):
+        nonlocal last_signature
+        signature = _visual_state_signature(state)
+        p_field = _snapshot_to_field(state, "P")
+        e_field = _snapshot_to_field(state, "E")
+        if before:
+            before_map = _snapshot_unit_map(before)
+            for field in (p_field, e_field):
+                for unit in field:
+                    if unit.get("is_empty"):
+                        continue
+                    previous = before_map.get(unit.get("unit_id"), {})
+                    unit["hp_change"] = int(unit.get("hp", 0)) - int(previous.get("hp", unit.get("hp", 0)))
+        attack_info = None
+        if entry and entry.get("type") == "attack":
+            attack_info = {
+                "type": entry.get("attack_type", ""),
+                "attacker_position": entry.get("attacker_position", -1),
+                "attacker_arrow": entry.get("attacker_arrow", ""),
+                "targets": entry.get("targets", []),
+            }
+        frames.append({
+            "round": round_num, "turn": turn, "phase": phase,
+            "player_field": p_field, "enemy_field": e_field,
+            "player_deltas": {}, "enemy_deltas": {},
+            "player_attack_dirs": {}, "enemy_attack_dirs": {},
+            "phase_text": phase, "attack_info": attack_info,
+            "event_text": event_text,
+            "player_sp": state.get("player_sp", 0),
+            "enemy_sp": state.get("enemy_sp", 0),
+        })
+        last_signature = signature
+
+    first = next((e for e in parsable_log if e.get("before_state")), None)
+    if not first:
+        return []
+    append_state(first["before_state"], "战斗开始", "战斗开始")
+
+    boundary_types = {"round_start", "turn_switch", "battle_end"}
+    for entry in parsable_log:
+        before = entry.get("before_state")
+        after = entry.get("after_state")
+        if not before or not after:
+            continue
+        event_type = entry.get("type")
+        if event_type == "assist_prepare":
+            continue
+        if event_type == "round_start":
+            round_num = entry.get("round", round_num)
+        elif event_type == "turn_switch":
+            turn = entry.get("side", turn)
+
+        before_sig = _visual_state_signature(before)
+        after_sig = _visual_state_signature(after)
+        changed = before_sig != after_sig
+        if not changed and event_type not in boundary_types:
+            continue
+
+        changes = _state_change_summary(before, after) if changed else []
+        title = _event_title(entry, changes)
+        # 若日志中间有未出帧的状态，先补一张无标题的真实 before 帧。
+        if last_signature != before_sig:
+            append_state(before, "状态同步", "状态同步")
+        append_state(after, event_type, title, entry=entry, before=before if changed else None)
+
+    return frames
+
+
 def _parse_parsable_log(parsable_log, p_raw, e_raw):
     """解析程序化日志生成战斗帧"""
+    if any(entry.get("schema_version", 0) >= 2 and entry.get("before_state")
+           for entry in parsable_log):
+        return _parse_snapshot_log(parsable_log)
+
     frames_data = []
     
     # 创建单位字典，从原始数据获取基础信息
@@ -1072,9 +1373,19 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                 save_frame("回合开始", [dict(u) for u in p_field], [dict(u) for u in e_field])
 
         elif entry_type == "sp_info":
-            # 更新SP值（不创建独立帧，SP值通过save_frame随下一帧输出）
-            player_sp = entry.get("player_sp", player_sp)
-            enemy_sp = entry.get("enemy_sp", enemy_sp)
+            # SP变化事件：生成pre+post帧展示SP变动
+            new_player_sp = entry.get("player_sp", player_sp)
+            new_enemy_sp = entry.get("enemy_sp", enemy_sp)
+            delta_p = new_player_sp - player_sp
+            delta_e = new_enemy_sp - enemy_sp
+            delta_text = []
+            if delta_p != 0: delta_text.append(f"P SP{'+' if delta_p>0 else ''}{delta_p}")
+            if delta_e != 0: delta_text.append(f"E SP{'+' if delta_e>0 else ''}{delta_e}")
+            event_text = " | ".join(delta_text) if delta_text else "SP变更"
+
+            # === 变化前帧 ===
+            save_frame("SP变化前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             # 同步单位状态
             for pos_info in entry.get("player_positions", []):
                 pos_base = _extract_base_name(pos_info.get("name", ""))
@@ -1096,6 +1407,10 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                         u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
                         u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                         break
+            player_sp = new_player_sp
+            enemy_sp = new_enemy_sp
+
+            save_frame("SP变化后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
 
         elif entry_type == "turn_switch":
             turn = entry.get("side", turn)
@@ -1143,6 +1458,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             pos_names = ["左下", "左中", "中", "右中", "右下"] if side == "P" else ["左上", "左中", "上", "右中", "右上"]
             event_text = f"{chara_name}: 换位→{pos_names[new_pos]}" if 0 <= new_pos < 5 else f"{chara_name}: 换位"
             
+            # === 变化前帧 ===
+            save_frame("换位前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             field = p_field if side == "P" else e_field
             for u in field:
                 if not u.get("is_empty") and u.get("base_name"):
@@ -1152,7 +1470,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["name"] = f"{name}[{new_arrow}]"
                         break
             
-            save_frame("换位", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("换位后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
         
         elif entry_type == "enter":
             side = entry.get("side")
@@ -1164,6 +1482,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             chara_name = _extract_base_name(name)
             event_text = f"{chara_name}: 替补上场"
             
+            # === 变化前帧 ===
+            save_frame("替补上场前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             field = p_field if side == "P" else e_field
             units_dict = p_units_dict if side == "P" else e_units_dict
             
@@ -1200,7 +1521,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             field[target_pos] = unit
                             break
             
-            save_frame("替补上场", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("替补上场后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
         
         elif entry_type == "attack":
             attack_type = entry.get("attack_type", "普")
@@ -1211,6 +1532,14 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
 
             # 提取攻击者名字（去掉称号）
             attacker_name = _extract_base_name(attacker)
+
+            # 构建攻击前帧描述
+            target_name = _extract_base_name(targets[0].get("name", "")) if targets else ""
+            pre_effect = {"技": "技能", "终": "必杀", "A": "支援"}.get(attack_type, "攻击")
+            pre_text = f"{attacker_name} → {target_name}: {pre_effect}" if target_name else f"{attacker_name}: {pre_effect}"
+
+            # === 变化前帧：记录攻击前的状态 ===
+            save_frame(f"攻击前[{attack_type}]", [dict(u) for u in p_field], [dict(u) for u in e_field], None, pre_text)
 
             # Fix 1: 从position数据同步HP变化（攻击后血量应立即反映在帧中）
             for pos_info in entry.get("player_positions", []):
@@ -1288,7 +1617,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                 "targets": targets
             }
 
-            save_frame(f"攻击[{attack_type}]", [dict(u) for u in p_field], [dict(u) for u in e_field], attack_info, event_text)
+            save_frame(f"攻击后[{attack_type}]", [dict(u) for u in p_field], [dict(u) for u in e_field], attack_info, event_text)
 
             # Fix 6: 攻击帧已记录阵亡状态，清空死单位的buffs/debuffs
             # 不再设置position=-1，让retreat事件或round_start/turn_switch来处理位移
@@ -1311,6 +1640,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             source_name = _extract_base_name(source_unit)
             event_text = f"{assist_name}: 准备触发效果"
             
+            # === 变化前帧：记录A卡触发前的状态 ===
+            save_frame("A卡准备前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             # 同步HP/alive/position/buffs/debuffs（参照attack handler的同步模式）
             if "player_positions" in entry:
                 for pos_info in entry["player_positions"]:
@@ -1341,7 +1673,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                             break
             
-            save_frame("A卡准备", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("A卡准备后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
         
         elif entry_type == "assist_trigger":
             # A卡效果触发后的帧
@@ -1370,6 +1702,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                 else:
                     event_text = f"{assist_name}: 效果触发"
 
+            # === 变化前帧：记录A卡触发前的状态 ===
+            save_frame("A卡触发前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             # 同步HP/alive/position/buffs/debuffs（参照attack handler的同步模式）
             if "player_positions" in entry:
                 for pos_info in entry["player_positions"]:
@@ -1400,7 +1735,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                             break
 
-            save_frame("A卡触发", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("A卡触发后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
 
         elif entry_type == "hp_threshold":
             # HP阈值触发事件
@@ -1411,6 +1746,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             chara_name = _extract_base_name(threshold_name)
             event_text = f"{chara_name}: HP阈值({threshold_value}) → {effect_desc}"
             
+            # === 变化前帧：记录HP阈值触发前的状态 ===
+            save_frame("HP阈值前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             # 同步所有单位的HP/alive/position/buffs/debuffs
             if "player_positions" in entry:
                 for pos_info in entry["player_positions"]:
@@ -1441,7 +1779,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                             break
             
-            save_frame("HP阈值", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("HP阈值后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
 
         elif entry_type == "trigger":
             # 通用触发事件（被动技能/条件触发等）
@@ -1456,6 +1794,9 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             else:
                 event_text = f"{chara_name}: {trigger_effect}"
             
+            # === 变化前帧：记录触发前的状态 ===
+            save_frame("触发前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
             # 同步所有单位的HP/alive/position/buffs/debuffs
             if "player_positions" in entry:
                 for pos_info in entry["player_positions"]:
@@ -1486,10 +1827,13 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                             u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
                             break
             
-            save_frame("触发", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("触发后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
 
         elif entry_type == "retreat":
             # 退场帧：标记阵亡单位，清除场上位置
+            # === 变化前帧 ===
+            save_frame("退场前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, "退场前")
+
             retreat_names = []
             for pos_info in entry.get("player_positions", []):
                 name = pos_info.get("name", "")
@@ -1533,7 +1877,7 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
                         break
 
             event_text = f"退场: {', '.join(retreat_names)}" if retreat_names else "退场"
-            save_frame("退场", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+            save_frame("退场后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
         
         elif entry_type == "battle_end":
             winner = entry.get("winner")
@@ -1550,8 +1894,178 @@ def _parse_parsable_log(parsable_log, p_raw, e_raw):
             if reason:
                 event_text += f" ({reason})"
             save_frame(f"{winner}胜利", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
-    
+
+        elif entry_type == "dot_damage":
+            # DoT伤害事件
+            content = entry.get("content", "")
+            event_text = f"DoT伤害: {content}" if content else "DoT伤害"
+
+            # === 变化前帧 ===
+            save_frame("DoT前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+            # 同步HP变化
+            for pos_info in entry.get("player_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["max_hp"] = pos_info.get("max_hp", u["max_hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["max_hp"] = pos_info.get("max_hp", u["max_hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+
+            save_frame("DoT后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+        elif entry_type == "buff_expiry":
+            # buff到期事件
+            event_text = "BUFF到期"
+
+            # === 变化前帧 ===
+            save_frame("BUFF到期前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+            # 同步变更后的状态（buffs/debuffs已更新）
+            for pos_info in entry.get("player_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+
+            save_frame("BUFF到期后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+        elif entry_type == "debuff_trigger":
+            # debuff触发事件
+            content = entry.get("content", "")
+            event_text = f"Debuff触发: {content}" if content else "Debuff触发"
+
+            # === 变化前帧 ===
+            save_frame("Debuff触发前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+            for pos_info in entry.get("player_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+
+            save_frame("Debuff触发后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+        elif entry_type == "stun_recover":
+            # 无法行动恢复事件
+            content = entry.get("content", "")
+            event_text = f"无法行动恢复: {content}" if content else "无法行动恢复"
+
+            # === 变化前帧 ===
+            save_frame("硬直前", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+            for pos_info in entry.get("player_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in p_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+            for pos_info in entry.get("enemy_positions", []):
+                base_name = _extract_base_name(pos_info.get("name", ""))
+                for u in e_field:
+                    if not u.get("is_empty") and u.get("base_name") == base_name:
+                        u["hp"] = pos_info.get("hp", u["hp"])
+                        u["alive"] = pos_info.get("alive", u["alive"])
+                        u["buffs"] = pos_info.get("buffs", u.get("buffs", []))
+                        u["debuffs"] = pos_info.get("debuffs", u.get("debuffs", []))
+                        break
+
+            save_frame("硬直后", [dict(u) for u in p_field], [dict(u) for u in e_field], None, event_text)
+
+    # 插入buff/debuff变化标记帧（仅在非攻击事件间检测）
+    frames_data = _insert_buff_change_frames(frames_data)
+
     return frames_data
+
+
+def _buffs_differ(f1, f2):
+    """Return 'B' if buffs changed, 'D' if debuffs."""
+    changed = []
+    for field_name in ["player_field", "enemy_field"]:
+        f1f = f1.get(field_name, [])
+        f2f = f2.get(field_name, [])
+        for i in range(min(len(f1f), len(f2f))):
+            u1 = f1f[i]
+            u2 = f2f[i]
+            b1 = frozenset((b.get("name",""), b.get("magnitude","")) for b in u1.get("buffs", []))
+            b2 = frozenset((b.get("name",""), b.get("magnitude","")) for b in u2.get("buffs", []))
+            d1 = frozenset((d.get("name",""), d.get("magnitude","")) for d in u1.get("debuffs", []))
+            d2 = frozenset((d.get("name",""), d.get("magnitude","")) for d in u2.get("debuffs", []))
+            if b1 != b2: changed.append("B")
+            if d1 != d2: changed.append("D")
+    return "".join(sorted(set(changed)))
+
+def _insert_buff_change_frames(frames_data):
+    """在帧序列中检测buff/debuff变化，在非攻击/A卡帧间插入标记帧。"""
+    import copy
+    result = []
+    SKIP = {"回合开始", "战斗开始", "战斗结束", "退场前", "退场后",
+            "SP变化前", "SP变化后", "BUFF到期前", "BUFF到期后",
+            "DoT前", "DoT后", "Debuff触发前", "Debuff触发后",
+            "HP阈值前", "HP阈值后", "触发前", "触发后",
+            "硬直前", "硬直后"}
+
+    for i, frame in enumerate(frames_data):
+        if i > 0:
+            prev = result[-1]
+            pp = prev.get("phase", "")
+            cp = frame.get("phase", "")
+            if pp in SKIP or cp in SKIP or "攻击" in pp or "攻击" in cp or "A卡" in pp or "A卡" in cp:
+                result.append(frame)
+                continue
+            diff = _buffs_differ(prev, frame)
+            if diff:
+                desc = []
+                if "B" in diff: desc.append("BUFF增减")
+                if "D" in diff: desc.append("DEBUFF增减")
+                marker = copy.deepcopy(prev)
+                marker["event_text"] = ", ".join(desc)
+                marker["phase"] = "状态变化"
+                result.append(marker)
+        result.append(frame)
+    return result
 
 
 def _calculate_hp_changes(frames_data, log):
@@ -1656,6 +2170,7 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
     
     # 计算HP变化
     frames_data = _calculate_hp_changes(frames_data, log)
+    frames_data = _limit_gif_frames(frames_data)
     
     if not frames_data:
         print("GIF生成失败：没有解析到战斗帧")
@@ -1737,7 +2252,8 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
         py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
         bg.paste(p_frame, (px, py), p_frame)
 
-        frames.append(bg)
+        # 立即压缩为调色板帧，不让全部 RGBA 画布同时常驻内存。
+        frames.append(_quantize_gif_frame(bg))
 
     if frames:
         winner = result.get("winner", "draw")
@@ -1757,7 +2273,7 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
         cy = (ch - 40) // 2
         draw.rectangle([cx - 12, cy - 4, cx + tw + 12, cy + 32], fill=(0, 0, 0))
         draw.text((cx, cy), win_text, fill=(255, 215, 0), font=font_win)
-        frames.append(last)
+        frames.append(_quantize_gif_frame(last))
 
     if output_path is None:
         from datetime import datetime
@@ -1777,23 +2293,24 @@ def battle_to_gif_new(result, characters=None, output_path=None, frame_duration=
                 except (IOError, OSError):
                     pass
     
-    scaled_frames = []
     scale_factor = 1
-    for f in frames:
-        new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
-        scaled_f = f.resize(new_size, Image.Resampling.LANCZOS)
-        scaled_frames.append(scaled_f)
-    
-    # GIF不支持RGBA，保存前转为RGB
-    rgb_frames = [f.convert('RGB') for f in scaled_frames]
-    rgb_frames[0].save(
+    if scale_factor == 1:
+        scaled_frames = frames
+    else:
+        scaled_frames = []
+        for f in frames:
+            new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
+            scaled_frames.append(f.resize(new_size, Image.Resampling.LANCZOS))
+
+    palette_frames = scaled_frames
+    palette_frames[0].save(
         output_path,
         save_all=True,
-        append_images=rgb_frames[1:],
+        append_images=palette_frames[1:],
         duration=frame_duration,
         loop=0,
         disposal=2,
-        optimize=False, quality=30
+        optimize=False
     )
     
     print("GIF生成成功！")
@@ -1827,6 +2344,7 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
     
     # 计算HP变化
     frames_data = _calculate_hp_changes(frames_data, log)
+    frames_data = _limit_gif_frames(frames_data)
     
     if not frames_data:
         print("GIF生成失败：没有解析到战斗帧")
@@ -1908,7 +2426,8 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
         py = e_frame.height + SECTION_SPACING + PADDING + EVENT_TEXT_HEIGHT + SP_BAR_HEIGHT
         bg.paste(p_frame, (px, py), p_frame)
 
-        frames.append(bg)
+        # 立即压缩为调色板帧，不让全部 RGBA 画布同时常驻内存。
+        frames.append(_quantize_gif_frame(bg))
 
     if frames:
         winner = result.get("winner", "draw")
@@ -1928,32 +2447,33 @@ def battle_to_gif_bytes(result, characters=None, frame_duration=1200):
         cy = (ch - 40) // 2
         draw.rectangle([cx - 12, cy - 4, cx + tw + 12, cy + 32], fill=(0, 0, 0))
         draw.text((cx, cy), win_text, fill=(255, 215, 0), font=font_win)
-        frames.append(last)
+        frames.append(_quantize_gif_frame(last))
 
     if not frames:
         print("GIF生成失败：没有帧数据")
         return None
 
     # 缩放并保存到BytesIO
-    scaled_frames = []
     scale_factor = 1
-    for f in frames:
-        new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
-        scaled_f = f.resize(new_size, Image.Resampling.LANCZOS)
-        scaled_frames.append(scaled_f)
+    if scale_factor == 1:
+        scaled_frames = frames
+    else:
+        scaled_frames = []
+        for f in frames:
+            new_size = (int(f.width * scale_factor), int(f.height * scale_factor))
+            scaled_frames.append(f.resize(new_size, Image.Resampling.LANCZOS))
     
-    # GIF不支持RGBA，保存前转为RGB
-    rgb_frames = [f.convert('RGB') for f in scaled_frames]
+    palette_frames = scaled_frames
     buffer = BytesIO()
-    rgb_frames[0].save(
+    palette_frames[0].save(
         buffer,
         format='GIF',
         save_all=True,
-        append_images=rgb_frames[1:],
+        append_images=palette_frames[1:],
         duration=frame_duration,
         loop=0,
         disposal=2,
-        optimize=False, quality=30
+        optimize=False
     )
     buffer.seek(0)
     

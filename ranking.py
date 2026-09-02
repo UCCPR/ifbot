@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from battle_system import format_battle_result, format_boss_result
+from json_store import atomic_write_json, read_json, synchronized
 from team_system import (
     get_defense_team, get_defense_team_info,
     build_vs_team_image, build_team_image,
@@ -22,19 +23,8 @@ BACKUP_DIR.mkdir(exist_ok=True)
 
 
 def _atomic_json_save(file_path, data):
-    """原子JSON写入（临时文件+rename，失败则直写）"""
-    import tempfile
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=str(file_path.parent), suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, str(file_path))
-    except Exception:
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+    """兼容旧调用点，实际写入由统一存储模块负责。"""
+    atomic_write_json(file_path, data)
 
 def _qq():
     """获取qq_bot_ws模块引用（优先__main__，避免模块双重加载）"""
@@ -50,6 +40,7 @@ RANKING_REWARDS_FILE = INFO_DIR / "ranking_rewards.json"
 # 排行榜每日结算奖励: 第1名45000呱太, 第2名35000呱太, 第3名25000呱太
 RANKING_REWARDS = {1: 45000, 2: 35000, 3: 25000}
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def init_ranking():
     """初始化排行榜（如果文件不存在）"""
     if not RANKING_FILE.exists():
@@ -90,8 +81,7 @@ def init_ranking():
 def load_ranking():
     """加载排行榜数据"""
     init_ranking()
-    with open(RANKING_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return read_json(RANKING_FILE, list)
 
 def save_ranking(ranking):
     """保存排行榜数据（写入前自动备份到 backup/ 目录）"""
@@ -116,13 +106,10 @@ def save_ranking(ranking):
 
 def load_ranking_rewards() -> dict:
     """加载排行榜奖励记录"""
-    if not RANKING_REWARDS_FILE.exists():
-        return {"last_settlement_date": "", "players": {}}
-    try:
-        with open(RANKING_REWARDS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {"last_settlement_date": "", "players": {}}
+    return read_json(
+        RANKING_REWARDS_FILE,
+        lambda: {"last_settlement_date": "", "players": {}},
+    )
 
 def save_ranking_rewards(data: dict):
     """保存排行榜奖励记录"""
@@ -144,6 +131,7 @@ def get_player_entry(user_id: str):
             return entry
     return None
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def settle_ranking_rewards() -> dict | None:
     """每日12:00结算排行榜前三名奖励（每天最多一次）"""
     try:
@@ -218,6 +206,7 @@ def settle_ranking_rewards() -> dict | None:
         _qq().log_error(f"排行榜结算异常: {e}\n{traceback.format_exc()}")
         return None
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def add_player_to_ranking(user_id: str, nickname: str, team: dict, rank: int):
     """将玩家添加到排行榜（替换该位置的AI）"""
     ranking = load_ranking()
@@ -255,6 +244,7 @@ def add_player_to_ranking(user_id: str, nickname: str, team: dict, rank: int):
     save_ranking(ranking)
     return new_entry
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def update_ranking_after_battle(winner_id: str, loser_id: str, is_winner_ai: bool, is_loser_ai: bool, winner_team: dict = None, winner_nickname: str = None):
     """战斗结束后更新排行榜"""
     ranking = load_ranking()
@@ -349,6 +339,7 @@ def show_ranking(user_id: str, group_id):
     _qq().send_message(reply, user_id, group_id)
     return _qq().jsonify({"status": "success", "message": "显示排行榜"})
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def challenge_player(user_id: str, group_id, target_openid: str):
     """@玩家 挑战：根据 openid 查找排名并发起挑战"""
     ranking = load_ranking()
@@ -368,6 +359,7 @@ def challenge_player(user_id: str, group_id, target_openid: str):
     _qq().log_info(f"@挑战: {user_id} -> {target_openid} (排名{target_rank} {target_nick})")
     return challenge_rank(user_id, group_id, target_rank)
 
+@synchronized("ranking", lambda *args, **kwargs: "global")
 def challenge_rank(user_id: str, group_id, target_rank: int):
     """挑战指定排名的玩家/AI"""
     try:
@@ -550,7 +542,7 @@ def challenge_rank(user_id: str, group_id, target_rank: int):
 
 
 def _list_cached_gifs(user_id: str, group_id):
-    """列出用户缓存的最近3个GIF下载链接"""
+    """列出用户缓存的最近1个GIF下载链接"""
     # GIF缓存放在static_images下，直接用图片服务器提供下载
     cache_dir = BASE_DIR / "static_images" / "gifs"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -561,8 +553,8 @@ def _list_cached_gifs(user_id: str, group_id):
     host = _qq().IMAGE_HOST or "localhost"
     scheme = "https" if "trycloudflare" in host else "http"
     port = "" if "trycloudflare" in host else ":18080"
-    msg = f"最近3个GIF ({len(files)}个缓存):\n"
-    for f in files[:3]:
+    msg = f"最近生成的GIF:\n"
+    for f in files[:1]:
         ts = datetime.fromtimestamp(os.path.getmtime(f)).strftime("%m-%d %H:%M")
         size_kb = os.path.getsize(f) // 1024
         url = f"{scheme}://{host}{port}/gifs/{f.name}"
@@ -608,6 +600,9 @@ def handle_battle_log(user_id: str, group_id, gen_gif: bool = False):
                 _qq().send_message(f"GIF生成冷却中，请{int(180 - (now - last_gif))}秒后再试", user_id, group_id)
                 return _qq().jsonify({"status": "cooldown"})
             try:
+                import time as _time
+                started_at = _time.perf_counter()
+                _qq().send_message("正在生成战斗GIF，请稍候…\n详细文字战报可另输入「战斗日志」。", user_id, group_id)
                 # 用战斗日志哈希做缓存key，相同战斗直接复用
                 import hashlib
                 cache_key = hashlib.md5(json.dumps(result.get('log', [])[:500]).encode()).hexdigest()[:12]
@@ -615,28 +610,45 @@ def handle_battle_log(user_id: str, group_id, gen_gif: bool = False):
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file = cache_dir / f"{user_id}_{cache_key}.gif"
 
-                # 每用户保留最近3个
-                old_files = sorted(cache_dir.glob(f"{user_id}_*.gif"), key=os.path.getmtime, reverse=True)
-                for f in old_files[3:]:
-                    try: f.unlink()
-                    except: pass
-
+                send_ok = False
                 if cache_file.exists():
                     _qq().log_info(f"GIF缓存命中: {cache_file.name}")
                     with open(cache_file, 'rb') as f:
                         send_qq_gif = _qq().send_qq_gif
-                        send_qq_gif(group_id, BytesIO(f.read()), content="")
+                        send_ok = send_qq_gif(group_id, BytesIO(f.read()), content="")
                 else:
                     from gif_renderer import battle_to_gif_bytes
                     gif_buffer = battle_to_gif_bytes(result, frame_duration=1200)
                     if gif_buffer:
+                        gif_bytes = gif_buffer.getvalue()
                         with open(cache_file, 'wb') as f:
-                            f.write(gif_buffer.getvalue())
+                            f.write(gif_bytes)
                         gif_buffer.seek(0)
-                        _qq().send_qq_gif(group_id, gif_buffer, content="")
+                        send_ok = _qq().send_qq_gif(group_id, gif_buffer, content="")
+                        elapsed = _time.perf_counter() - started_at
+                        _qq().log_info(
+                            f"GIF生成+发送: {elapsed:.2f}s, {len(gif_bytes) / 1024:.1f}KB, send_ok={send_ok}"
+                        )
                     else:
                         _qq().send_message("GIF生成失败", user_id, group_id)
-                _qq()._GIF_COOLDOWN[user_id] = now
+
+                # 每用户只保留当前缓存。旧逻辑在新文件写入前清理，实际可能留下2个。
+                for old_file in cache_dir.glob(f"{user_id}_*.gif"):
+                    if old_file != cache_file:
+                        try:
+                            old_file.unlink()
+                        except OSError:
+                            pass
+
+                if cache_file.exists() and not send_ok:
+                    host = _qq()._IMAGE_HOST_CACHE.get("value") or _qq().IMAGE_HOST or "localhost"
+                    scheme = "https" if "trycloudflare" in host else "http"
+                    port = "" if "trycloudflare" in host else ":18080"
+                    url = f"{scheme}://{host}{port}/gifs/{cache_file.name}"
+                    _qq().send_message(f"GIF直接发送失败，请使用下载链接:\n{url}", user_id, group_id)
+
+                if cache_file.exists():
+                    _qq()._GIF_COOLDOWN[user_id] = now
             except Exception as gif_err:
                 _qq().log_error(f"战斗GIF生成失败: {gif_err}")
         import re
@@ -648,6 +660,7 @@ def handle_battle_log(user_id: str, group_id, gen_gif: bool = False):
             if len(log_text) > 4000:
                 log_text = log_text[:4000] + "\n... (日志过长已截断)"
             _qq().send_message(at_message + log_text, user_id, group_id)
+        # GIF命令只发生成提示 + GIF，不再附加4000字战报，减少同一 msg_id 的多次被动回复。
 
         return _qq().jsonify({"status": "success", "message": "显示战斗日志"})
 
@@ -1224,5 +1237,3 @@ def handle_help(user_id: str, group_id, raw_message: str = ""):
     _qq().send_message(at + help_text, user_id, group_id)
     _qq().log_info(f"帮助 [{user_id}]: 章节={chapter or '总览'}")
     return _qq().jsonify({"status": "success", "chapter": chapter or "overview"})
-
-

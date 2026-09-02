@@ -1,7 +1,7 @@
 [Unit]
 Description=QQ Bot (botpy WebSocket)
-After=network.target qqbot-tunnel.service
-Wants=qqbot-tunnel.service
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple

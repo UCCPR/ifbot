@@ -5,7 +5,8 @@ import os, json, random, re
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
+from image_cache import load_shared_image
 
 BASE_DIR = Path(__file__).parent
 INFO_DIR = BASE_DIR / "info"
@@ -13,15 +14,61 @@ LEVEL_DIR = BASE_DIR / "level"
 
 from card_image import (get_level_image, find_attribute_icon, find_type_icon, composite_card)
 
-# ========== PIL 图片缓存 ==========
-_PIL_CACHE = {}  # {"path_str": PIL.Image对象(RGBA)}
-
 def _pil_open(path):
-    """带缓存的图片加载，返回RGBA副本"""
-    key = str(path)
-    if key not in _PIL_CACHE:
-        _PIL_CACHE[key] = Image.open(path).convert('RGBA')
-    return _PIL_CACHE[key].copy()
+    """从共享压缩LRU加载图片，返回独立RGBA对象。"""
+    return load_shared_image(path, 'RGBA')
+
+
+def _draw_result_slot(canvas: Image.Image, x: int, y: int, size: int, stars: int):
+    """绘制原作风格的半透明卡槽和稀有度光晕。"""
+    glow_colors = {
+        1: (145, 194, 255, 105),
+        2: (105, 190, 255, 145),
+        3: (255, 193, 42, 185),
+    }
+    border_colors = {
+        1: (211, 226, 255, 230),
+        2: (135, 218, 255, 245),
+        3: (255, 214, 74, 255),
+    }
+    glow_color = glow_colors.get(int(stars or 1), glow_colors[1])
+    border_color = border_colors.get(int(stars or 1), border_colors[1])
+
+    # 光晕只在卡槽附近的小图层上处理，避免每张卡都模糊整张 1920x936 画布。
+    blur_radius = 14
+    pad = 15
+    margin = pad + blur_radius * 2
+    glow_size = size + margin * 2
+    glow = Image.new('RGBA', (glow_size, glow_size), (0, 0, 0, 0))
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.rounded_rectangle(
+        [margin - pad, margin - pad, margin + size + pad, margin + size + pad],
+        radius=26, fill=glow_color
+    )
+    glow = glow.filter(ImageFilter.GaussianBlur(blur_radius))
+    canvas.alpha_composite(glow, (x - margin, y - margin))
+
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle(
+        [x - 11, y - 11, x + size + 11, y + size + 11],
+        radius=22,
+        fill=(218, 239, 255, 85),
+        outline=(235, 247, 255, 205),
+        width=4,
+    )
+    draw.rounded_rectangle(
+        [x - 5, y - 5, x + size + 5, y + size + 5],
+        radius=15, outline=border_color, width=4
+    )
+
+def _draw_new_badge(canvas: Image.Image, x: int, y: int, card_size: int):
+    badge = load_shared_image(LEVEL_DIR / "common_quest_icon_new.png", 'RGBA')
+    if badge is None:
+        return
+    # 素材原生94×34；右侧略微越过卡框，与原作结果页的位置一致。
+    tx = x + card_size - badge.width + 18
+    ty = y - 20
+    canvas.alpha_composite(badge, (tx, ty))
 
 def _qq():
     """获取qq_bot_ws模块引用（优先__main__，避免模块双重加载）"""
@@ -319,7 +366,7 @@ def create_opened_box_card(box_info: dict) -> bytes:
         return create_box_card(box_info, [])
     
     # 使用正常的卡牌合成逻辑
-    return composite_card(character)
+    return composite_card(character, result_style=True)
 
 
 def create_box_summary_image(boxes: list, opened_indices: list, characters: list) -> bytes:
@@ -331,91 +378,55 @@ def create_box_summary_image(boxes: list, opened_indices: list, characters: list
     if not boxes:
         return None
     
-    # 创建单张盲盒图片的尺寸
-    single_card_img = None
-    for i, box in enumerate(boxes):
-        img_bytes = create_box_card(box, characters)
-        if img_bytes:
-            single_card_img = Image.open(BytesIO(img_bytes))
-            break
-    
-    if not single_card_img:
-        return None
-    
-    card_width, card_height = single_card_img.size
     count = len(boxes)
-    
-    # 计算行列布局
-    if count <= 5:
-        cols = count
-        rows = 1
-    else:
-        cols = 5
-        rows = (count + 4) // 5
+    cols = min(5, count)
+    rows = 1 if count <= 5 else 2
 
-    gap = 18
-    cards_total_width = card_width * cols + gap * (cols - 1)
-    cards_total_height = card_height * rows + gap * (rows - 1)
-    
-    # 尝试加载抽卡结果背景图片（使用gacha_tmb_bg_11.png）
-    bg_path = None
-    for bg_name in ["gacha_tmb_bg_11.png", "gacha_tmb_11_bg.png", "gacha_bg_11.png"]:
-        test_path = LEVEL_DIR / bg_name
-        if test_path.exists():
-            bg_path = str(test_path)
-            break
-    
-    # 如果找不到gacha_tmb_bg_11.png，回退到gacha_tmb_bg_10.png
-    if not bg_path:
-        for bg_name in ["gacha_tmb_bg_10.png", "gacha_tmb_10_bg.png", "gacha_bg_10.png"]:
-            test_path = LEVEL_DIR / bg_name
-            if test_path.exists():
-                bg_path = str(test_path)
-                break
-    
-    if bg_path:
-        # 使用背景图片
-        _qq().log_info(f"使用汇总背景图片: {bg_path}")
-        bg_img = _pil_open(bg_path).convert('RGB')
-        
-        # 将背景放大到原来的2倍
-        bg_w, bg_h = bg_img.size
-        final_w = int(bg_w * 2 * 0.264)
-        final_h = int(bg_h * 2 *0.264)
-        bg_img_resized = bg_img.resize((final_w, final_h), Image.Resampling.LANCZOS)
-        
-        # 创建最终画布
-        output = Image.new('RGB', (final_w, final_h), (50, 50, 50))
-        output.paste(bg_img_resized, (0, 0))
-        
-        # 计算卡牌居中位置
-        cards_x = (final_w - cards_total_width) // 2
-        cards_y = (final_h - cards_total_height) // 2
+    bg_path = LEVEL_DIR / "gacha_tmb_bg_11.png"
+    if bg_path.exists():
+        output = _pil_open(bg_path).convert('RGBA')
     else:
-        # 没有背景，使用纯色背景
-        output = Image.new('RGB', (cards_total_width, cards_total_height), (50, 50, 50))
-        cards_x = 0
-        cards_y = 0
-    
+        output = Image.new('RGBA', (1920, 936), (180, 220, 250, 255))
+
+    # 在 1920x936 原始 UI 坐标上合成，最后统一缩小，避免先缩背景再导致卡牌布局错位。
+    card_size = 190
+    gap_x = 68
+    row_y = [215, 490]
+    total_width = card_size * cols + gap_x * (cols - 1)
+    start_x = (output.width - total_width) // 2
+
     for i, box in enumerate(boxes):
         row = i // cols
         col = i % cols
-        
+        if row >= rows:
+            break
+
         if i in opened_indices:
-            # 已开的盲盒显示角色
             img_bytes = create_opened_box_card(box)
         else:
-            # 未开的盲盒显示盲盒封面
             img_bytes = create_box_card(box, characters)
-        
+
         if img_bytes:
-            card_img = Image.open(BytesIO(img_bytes))
-            x = cards_x + col * (card_width + gap)
-            y = cards_y + row * (card_height + gap)
-            output.paste(card_img, (x, y))
-    
+            with Image.open(BytesIO(img_bytes)) as source:
+                card_img = source.convert('RGBA')
+                card_img.load()
+            source_w, source_h = card_img.size
+            target_h = max(card_size, round(card_size * source_h / source_w))
+            card_img = card_img.resize((card_size, target_h), Image.Resampling.LANCZOS)
+            x = start_x + col * (card_size + gap_x)
+            # 单抽按包含类型标签的完整卡图居中；十连继续使用固定两行布局。
+            y = (output.height - target_h) // 2 if count == 1 else row_y[row]
+
+            _draw_result_slot(output, x, y, card_size, box.get("stars", 1))
+            output.alpha_composite(card_img, (x, y))
+            if i in opened_indices and box.get("is_new", False):
+                _draw_new_badge(output, x, y, card_size)
+
+    # QQ 发送用尺寸：保留足够清晰度，同时控制文件体积。
+    final_size = (1280, 624)
+    output = output.convert('RGB').resize(final_size, Image.Resampling.LANCZOS)
     bio = BytesIO()
-    output.save(bio, format='JPEG', optimize=True, quality=60)
+    output.save(bio, format='JPEG', optimize=False, quality=82, subsampling=1)
     return bio.getvalue()
 
 
@@ -441,8 +452,23 @@ def get_box_session(user_id: str) -> dict:
     return _qq().BOX_SESSIONS.get(user_id)
 
 
+def cleanup_expired_box_sessions(max_age_seconds: int = 1800) -> int:
+    """按最后创建时间淘汰放弃的盲盒会话，适用于所有机器人入口。"""
+    sessions = _qq().BOX_SESSIONS
+    now = datetime.now()
+    expired = []
+    for uid, session in list(sessions.items()):
+        created_at = session.get("created_at") if isinstance(session, dict) else None
+        if isinstance(created_at, datetime) and (now - created_at).total_seconds() > max_age_seconds:
+            expired.append(uid)
+    for uid in expired:
+        sessions.pop(uid, None)
+    return len(expired)
+
+
 def create_box_session(user_id: str, boxes: list):
     """创建盲盒会话"""
+    cleanup_expired_box_sessions()
     _qq().BOX_SESSIONS[user_id] = {
         "boxes": boxes,
         "opened": [],  # 已开的盲盒索引

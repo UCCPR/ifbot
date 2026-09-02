@@ -1,11 +1,30 @@
 __pycache__/
+*.py[cod]
+
+# Runtime-generated files and private player data
 output/
+static_images/
 info/
-kook/
-agentmd/
 backup/
-discord/
-kook/
-config.json
+*.log
+
+# Local credentials and environment files
 config.py
-config.jsonagentmd
+config.json
+.env
+.env.*
+!.env.example
+
+# Local-only working notes, tests, and backups
+agentmd/
+.claude/
+docs/
+tests/
+.uploads/
+code_backups/
+启动命令.txt
+~$*.xlsx
+
+# Optional local integrations not required by the QQ WebSocket runtime
+kook/
+discord/

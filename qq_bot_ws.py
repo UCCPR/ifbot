@@ -10,6 +10,8 @@ import random
 import json
 import asyncio
 import threading
+import contextvars
+from concurrent.futures import TimeoutError as FutureTimeoutError
 import re as _re
 import uuid
 from datetime import datetime, timedelta
@@ -19,6 +21,8 @@ import atexit
 
 from PIL import Image
 import openpyxl
+from json_store import atomic_write_json, read_json, synchronized, update_json
+from storage_maintenance import append_rotating_log, cleanup_storage
 
 # botpy WebSocket SDK
 import botpy
@@ -106,8 +110,7 @@ def log_info(message: str):
     """记录普通信息"""
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_info.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] {message}\n")
     _safe_print("INFO", message)
 
 
@@ -115,8 +118,7 @@ def log_error(message: str):
     """记录错误信息"""
     timestamp = datetime.now().strftime("%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_error.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] ERR {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] ERR {message}\n")
     _safe_print("ERROR", message)
 
 
@@ -401,18 +403,7 @@ def get_pity_file(user_id: str) -> Path:
 
 def load_pity_data(user_id: str) -> dict:
     """加载用户的抽卡记录数据"""
-    pity_file = get_pity_file(user_id)
-    if pity_file.exists():
-        try:
-            with open(pity_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            log_error(f"用户 {user_id} 的抽卡记录文件格式错误: {e}")
-            return get_default_pity_data()
-        except IOError as e:
-            log_error(f"读取用户 {user_id} 的抽卡记录文件失败: {e}")
-            return get_default_pity_data()
-    return get_default_pity_data()
+    return read_json(get_pity_file(user_id), get_default_pity_data)
 
 
 def get_default_pity_data() -> dict:
@@ -447,22 +438,19 @@ def get_remaining_pity(user_id: str) -> int:
 
 def update_pity(user_id: str, got_3star: bool = False, is_fes_3star: bool = False):
     """更新用户的抽卡记录"""
-    pity_data = load_pity_data(user_id)
-    
-    # 如果抽到3星，重置保底计数并增加三星个数
-    if got_3star:
-        pity_data["pity_count"] = 0
-        pity_data["total_3stars"] = pity_data.get("total_3stars", 0) + 1
-        # 如果抽到フェス限定三星，重置フェス保底计数
-        if is_fes_3star:
-            pity_data["fes_pity_count"] = 0
-    else:
-        pity_data["pity_count"] = pity_data.get("pity_count", 0) + 1
-        pity_data["fes_pity_count"] = pity_data.get("fes_pity_count", 0) + 1
-    
-    pity_data["total_draws"] = pity_data.get("total_draws", 0) + 1
-    save_pity_data(user_id, pity_data)
-    return pity_data
+    def update(pity_data):
+        # 如果抽到3星，重置保底计数并增加三星个数
+        if got_3star:
+            pity_data["pity_count"] = 0
+            pity_data["total_3stars"] = pity_data.get("total_3stars", 0) + 1
+            if is_fes_3star:
+                pity_data["fes_pity_count"] = 0
+        else:
+            pity_data["pity_count"] = pity_data.get("pity_count", 0) + 1
+            pity_data["fes_pity_count"] = pity_data.get("fes_pity_count", 0) + 1
+        pity_data["total_draws"] = pity_data.get("total_draws", 0) + 1
+
+    return update_json(get_pity_file(user_id), get_default_pity_data, update)
 
 
 def get_total_draws(user_id: str) -> int:
@@ -491,40 +479,50 @@ def get_blue_crystal(user_id: str) -> int:
 
 def add_red_crystal(user_id: str, amount: int):
     """增加用户的红色碎片"""
-    pity_data = load_pity_data(user_id)
-    pity_data["red_crystal"] = pity_data.get("red_crystal", 0) + amount
-    save_pity_data(user_id, pity_data)
+    def add(data):
+        data["red_crystal"] = data.get("red_crystal", 0) + amount
+
+    pity_data = update_json(get_pity_file(user_id), get_default_pity_data, add)
     return pity_data["red_crystal"]
 
 
 def add_blue_crystal(user_id: str, amount: int):
     """增加用户的蓝色碎片"""
-    pity_data = load_pity_data(user_id)
-    pity_data["blue_crystal"] = pity_data.get("blue_crystal", 0) + amount
-    save_pity_data(user_id, pity_data)
+    def add(data):
+        data["blue_crystal"] = data.get("blue_crystal", 0) + amount
+
+    pity_data = update_json(get_pity_file(user_id), get_default_pity_data, add)
     return pity_data["blue_crystal"]
 
 
 def spend_red_crystal(user_id: str, amount: int) -> bool:
     """消耗用户的红色碎片，返回是否成功"""
-    pity_data = load_pity_data(user_id)
-    current = pity_data.get("red_crystal", 0)
-    if current >= amount:
-        pity_data["red_crystal"] = current - amount
-        save_pity_data(user_id, pity_data)
-        return True
-    return False
+    spent = False
+
+    def spend(data):
+        nonlocal spent
+        current = data.get("red_crystal", 0)
+        if current >= amount:
+            data["red_crystal"] = current - amount
+            spent = True
+
+    update_json(get_pity_file(user_id), get_default_pity_data, spend)
+    return spent
 
 
 def spend_blue_crystal(user_id: str, amount: int) -> bool:
     """消耗用户的蓝色碎片，返回是否成功"""
-    pity_data = load_pity_data(user_id)
-    current = pity_data.get("blue_crystal", 0)
-    if current >= amount:
-        pity_data["blue_crystal"] = current - amount
-        save_pity_data(user_id, pity_data)
-        return True
-    return False
+    spent = False
+
+    def spend(data):
+        nonlocal spent
+        current = data.get("blue_crystal", 0)
+        if current >= amount:
+            data["blue_crystal"] = current - amount
+            spent = True
+
+    update_json(get_pity_file(user_id), get_default_pity_data, spend)
+    return spent
 
 
 # ========== 三星池子系统 ==========
@@ -613,10 +611,6 @@ def draw_3star_pool(user_id: str, crystal_type: str = "red") -> dict:
 
 def add_recent_3star(user_id: str, card_id: str, chara_id: str, name: str, limit_type: str = None):
     """添加最近获得的三星卡记录（最多保存10个）"""
-    pity_data = load_pity_data(user_id)
-    recent = pity_data.get("recent_3stars", [])
-    
-    # 创建记录
     record = {
         "card_id": card_id,
         "chara_id": chara_id,
@@ -625,16 +619,13 @@ def add_recent_3star(user_id: str, card_id: str, chara_id: str, name: str, limit
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     
-    # 添加到开头
-    recent.insert(0, record)
-    
-    # 只保留最近10个
-    if len(recent) > 10:
-        recent = recent[:10]
-    
-    pity_data["recent_3stars"] = recent
-    save_pity_data(user_id, pity_data)
-    return recent
+    def add(pity_data):
+        recent = pity_data.get("recent_3stars", [])
+        recent.insert(0, record)
+        pity_data["recent_3stars"] = recent[:10]
+
+    pity_data = update_json(get_pity_file(user_id), get_default_pity_data, add)
+    return pity_data["recent_3stars"]
 
 
 def get_recent_3stars(user_id: str) -> list:
@@ -645,40 +636,36 @@ def get_recent_3stars(user_id: str) -> list:
 
 def add_card_collection(user_id: str, card_id: str, name: str, stars: int, limit_type: str = None):
     """添加卡片到收藏并更新数量统计（支持重复计数）"""
-    pity_data = load_pity_data(user_id)
-    collection = pity_data.get("card_collection", {})
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     now_timestamp = datetime.now().timestamp()
-    
-    # 如果是新卡片，添加到收藏
-    if card_id not in collection:
-        collection[card_id] = {
-            "name": name,
-            "stars": stars,
-            "limit_type": limit_type,
-            "count": 1,
-            "first_time": now,
-            "last_time": now_timestamp
-        }
-        
-        # 更新数量统计
-        if stars == 3:
-            if limit_type == "フェス限定":
-                pity_data["fes_count"] = pity_data.get("fes_count", 0) + 1
-            elif limit_type == "期間限定":
-                pity_data["period_count"] = pity_data.get("period_count", 0) + 1
-            else:
-                pity_data["other_3star_count"] = pity_data.get("other_3star_count", 0) + 1
-        elif stars == 2:
-            pity_data["total_2stars"] = pity_data.get("total_2stars", 0) + 1
-    else:
-        # 如果是重复卡片，增加计数并更新时间
-        collection[card_id]["count"] = collection[card_id].get("count", 1) + 1
-        collection[card_id]["last_time"] = now_timestamp
-    
-    pity_data["card_collection"] = collection
-    save_pity_data(user_id, pity_data)
-    return collection
+
+    def add(pity_data):
+        collection = pity_data.get("card_collection", {})
+        if card_id not in collection:
+            collection[card_id] = {
+                "name": name,
+                "stars": stars,
+                "limit_type": limit_type,
+                "count": 1,
+                "first_time": now,
+                "last_time": now_timestamp,
+            }
+            if stars == 3:
+                if limit_type == "フェス限定":
+                    pity_data["fes_count"] = pity_data.get("fes_count", 0) + 1
+                elif limit_type == "期間限定":
+                    pity_data["period_count"] = pity_data.get("period_count", 0) + 1
+                else:
+                    pity_data["other_3star_count"] = pity_data.get("other_3star_count", 0) + 1
+            elif stars == 2:
+                pity_data["total_2stars"] = pity_data.get("total_2stars", 0) + 1
+        else:
+            collection[card_id]["count"] = collection[card_id].get("count", 1) + 1
+            collection[card_id]["last_time"] = now_timestamp
+        pity_data["card_collection"] = collection
+
+    pity_data = update_json(get_pity_file(user_id), get_default_pity_data, add)
+    return pity_data["card_collection"]
 
 
 def calculate_power(user_id: str) -> int:
@@ -691,18 +678,52 @@ def calculate_power(user_id: str) -> int:
     return fes * 10 + period * 8 + other_3star * 7 + two_star * 3
 
 
+def get_player_card_stars(user_id: str) -> dict:
+    """获取玩家所有卡的星级：count+2, 最小3, 最大6。返回 {card_id: star_level}"""
+    from team_system import load_team_data
+    pity_data = load_pity_data(user_id)
+    collection = pity_data.get("card_collection", {})
+    result = {}
+    for cid, info in collection.items():
+        count = info.get("count", 1)
+        star = min(count + 2, 6)  # 第一张=3, 重复+1, 最高6
+        result[str(cid)] = star
+    return result
+
+
+def get_card_star_level(user_id: str, card_id: str) -> int:
+    """获取玩家某张卡的星级，默认3"""
+    try:
+        pity_data = load_pity_data(user_id)
+        info = pity_data.get("card_collection", {}).get(str(card_id), {})
+        count = info.get("count", 1)
+        return min(count + 2, 6)
+    except:
+        return 3
+
+def apply_card_stars_to_characters(user_id: str, characters: list) -> list:
+    """将玩家真实星级注入角色数据，返回新的角色列表"""
+    card_stars = get_player_card_stars(user_id)
+    if not card_stars:
+        return characters
+    result = []
+    for c in characters:
+        cid = str(c.get("card_id", ""))
+        if cid and cid in card_stars:
+            c_copy = dict(c)
+            c_copy["stars"] = card_stars[cid]
+            result.append(c_copy)
+        else:
+            result.append(c)
+    return result
+
+
 # ========== FES统计模块 ==========
 FES_STATS_FILE = INFO_DIR / "fes_stats.json"
 
 def load_fes_stats() -> dict:
     """加载全服FES角色获取统计"""
-    if FES_STATS_FILE.exists():
-        try:
-            with open(FES_STATS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+    return read_json(FES_STATS_FILE, dict)
 
 def save_fes_stats(stats: dict):
     """保存全服FES角色获取统计"""
@@ -715,11 +736,12 @@ def get_fes_count(card_id: str) -> int:
 
 def increment_fes_count(card_id: str, name: str) -> int:
     """增加FES角色获取计数并返回新的计数"""
-    stats = load_fes_stats()
-    if card_id not in stats:
-        stats[card_id] = {"count": 0, "name": name}
-    stats[card_id]["count"] += 1
-    save_fes_stats(stats)
+    def increment(stats):
+        if card_id not in stats:
+            stats[card_id] = {"count": 0, "name": name}
+        stats[card_id]["count"] += 1
+
+    stats = update_json(FES_STATS_FILE, dict, increment)
     return stats[card_id]["count"]
 
 
@@ -802,33 +824,12 @@ def get_gacha_file(user_id: str) -> Path:
 
 def load_gacha_data(user_id: str) -> dict:
     """加载用户的呱太数据"""
-    gacha_file = get_gacha_file(user_id)
-    if gacha_file.exists():
-        try:
-            with open(gacha_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {"gacha": 0}
-    return {"gacha": 0}
+    return read_json(get_gacha_file(user_id), lambda: {"gacha": 0})
 
 
 def _atomic_json_save(file_path: Path, data: dict):
-    """原子写入 JSON：先写临时文件再 rename，防止崩溃损坏数据"""
-    import tempfile
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        fd, tmp_path = tempfile.mkstemp(
-            suffix='.json', prefix='tmp_', dir=str(file_path.parent))
-        try:
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, file_path)
-        except:
-            os.unlink(tmp_path)
-            raise
-    except OSError:
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+    """兼容旧调用点，实际写入由统一存储模块负责。"""
+    atomic_write_json(file_path, data)
 
 def save_gacha_data(user_id: str, data: dict):
     """保存用户的呱太数据"""
@@ -843,21 +844,26 @@ def get_gacha_count(user_id: str) -> int:
 
 def add_gacha(user_id: str, amount: int) -> int:
     """增加用户的呱太数量"""
-    gacha_data = load_gacha_data(user_id)
-    gacha_data["gacha"] = gacha_data.get("gacha", 0) + amount
-    save_gacha_data(user_id, gacha_data)
+    def add(data):
+        data["gacha"] = data.get("gacha", 0) + amount
+
+    gacha_data = update_json(get_gacha_file(user_id), lambda: {"gacha": 0}, add)
     return gacha_data["gacha"]
 
 
 def spend_gacha(user_id: str, amount: int) -> bool:
     """消耗用户的呱太数量，返回是否成功"""
-    gacha_data = load_gacha_data(user_id)
-    current = gacha_data.get("gacha", 0)
-    if current >= amount:
-        gacha_data["gacha"] = current - amount
-        save_gacha_data(user_id, gacha_data)
-        return True
-    return False
+    spent = False
+
+    def spend(data):
+        nonlocal spent
+        current = data.get("gacha", 0)
+        if current >= amount:
+            data["gacha"] = current - amount
+            spent = True
+
+    update_json(get_gacha_file(user_id), lambda: {"gacha": 0}, spend)
+    return spent
 
 
 # ========== 签到系统 ==========
@@ -891,26 +897,32 @@ def can_signin(user_id: str) -> bool:
     return last_signin != today
 
 
+@synchronized("user-assets", lambda user_id: user_id)
 def do_signin(user_id: str) -> dict:
     """执行签到，返回签到结果"""
-    signin_data = load_signin_data(user_id)
     today = datetime.now().strftime("%Y-%m-%d")
-    
-    if signin_data.get("last_signin") == today:
+    signed_in = False
+
+    def sign_in(signin_data):
+        nonlocal signed_in
+        if signin_data.get("last_signin") == today:
+            return
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if signin_data.get("last_signin") == yesterday:
+            signin_data["streak"] = signin_data.get("streak", 0) + 1
+        else:
+            signin_data["streak"] = 1
+        signin_data["last_signin"] = today
+        signed_in = True
+
+    signin_data = update_json(
+        get_signin_file(user_id),
+        lambda: {"last_signin": "", "streak": 0},
+        sign_in,
+    )
+    if not signed_in:
         return {"success": False, "message": "今天已经签到过了", "streak": signin_data.get("streak", 0)}
-    
-    # 更新签到记录
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    if signin_data.get("last_signin") == yesterday:
-        # 连续签到
-        signin_data["streak"] = signin_data.get("streak", 0) + 1
-    else:
-        # 断签，重置连续天数
-        signin_data["streak"] = 1
-    
-    signin_data["last_signin"] = today
-    save_signin_data(user_id, signin_data)
-    
+
     # 添加签到奖励
     add_gacha(user_id, DAILY_REWARD)
     
@@ -1091,6 +1103,31 @@ _DAILY_SAVE_COUNTER = 0  # save_daily_stats 节流计数器
 _LAST_SETTLEMENT_CHECK = ""  # settle_ranking_rewards 每日去重标志（日期字符串）
 _IMAGE_HOST_CACHE = {"value": None, "mtime": 0}  # config.py IMAGE_HOST 缓存
 
+
+def _get_image_base_url() -> str:
+    """读取并规范化固定图床/临时隧道地址，不改变配置内容。"""
+    global IMAGE_HOST
+    img_host = ""
+    try:
+        config_path = BASE_DIR / "config.py"
+        config_mtime = config_path.stat().st_mtime if config_path.exists() else 0
+        if _IMAGE_HOST_CACHE["mtime"] != config_mtime:
+            _IMAGE_HOST_CACHE["value"] = None
+            with open(config_path, "r", encoding="utf-8") as handle:
+                for line in handle:
+                    match = _re.search(r'^\s*IMAGE_HOST\s*=\s*(["\'])(.*?)\1', line)
+                    if match:
+                        _IMAGE_HOST_CACHE["value"] = match.group(2).strip()
+                        break
+            _IMAGE_HOST_CACHE["mtime"] = config_mtime
+        img_host = _IMAGE_HOST_CACHE["value"] or ""
+    except (OSError, UnicodeError):
+        pass
+    image_base = (img_host or IMAGE_HOST or "localhost").strip().rstrip("/")
+    if not image_base.startswith(("http://", "https://")):
+        image_base = f"https://{image_base}"
+    return image_base
+
 def _cleanup_rate_limits():
     """清理超过2分钟的过期速率计数器，防止内存泄漏"""
     now = datetime.now().timestamp()
@@ -1140,7 +1177,7 @@ def _cleanup_temp_images():
         return
     now = _time.time()
     count = 0
-    for f in img_dir.glob("bot_*.png"):
+    for f in img_dir.glob("bot_*.*"):
         try:
             if now - f.stat().st_mtime > 600:
                 f.unlink()
@@ -1149,6 +1186,36 @@ def _cleanup_temp_images():
             pass
     if count:
         log_info(f"清理过期临时文件: {count} 个")
+
+
+def _cleanup_expired_runtime_state(max_age_seconds: int = 1800):
+    """清理放弃的抽卡会话与过期GIF冷却键，避免按用户数持续增长。"""
+    now = datetime.now()
+    expired_sessions = []
+    for user_id, session in list(BOX_SESSIONS.items()):
+        created_at = session.get("created_at") if isinstance(session, dict) else None
+        if isinstance(created_at, datetime) and (now - created_at).total_seconds() > max_age_seconds:
+            expired_sessions.append(user_id)
+    for user_id in expired_sessions:
+        BOX_SESSIONS.pop(user_id, None)
+
+    now_ts = now.timestamp()
+    for user_id, timestamp in list(_GIF_COOLDOWN.items()):
+        if now_ts - float(timestamp or 0) > 86400:
+            _GIF_COOLDOWN.pop(user_id, None)
+    return len(expired_sessions)
+
+
+def _run_capacity_maintenance():
+    _cleanup_temp_images()
+    expired_sessions = _cleanup_expired_runtime_state()
+    result = cleanup_storage(BASE_DIR)
+    if result["files"] or expired_sessions:
+        log_info(
+            f"容量维护: 文件{result['files']}个/"
+            f"{result['bytes'] / 1024 / 1024:.1f}MB, 过期会话{expired_sessions}个"
+        )
+    return result
 
 def _start_image_server():
     """启动内置HTTP文件服务（后台线程，端口18080，多线程）"""
@@ -1180,10 +1247,18 @@ def _start_image_server():
         while True:
             _time.sleep(1800)
             try:
-                _cleanup_temp_images()
+                _run_capacity_maintenance()
             except Exception:
                 pass
     threading.Thread(target=_periodic_cleanup, daemon=True).start()
+
+
+async def _remove_temp_file_later(path: Path, delay: float = 5.0):
+    await asyncio.sleep(delay)
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str = "", is_group: bool = True, msg_id: str = ""):
@@ -1191,43 +1266,62 @@ async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str
     global BOT_API, IMAGE_HOST
     import time as _t
 
-    fname = f"bot_{_t.time():.0f}_{random.randint(1000,9999)}.png"
+    # 扩展名必须与真实字节格式一致，SimpleHTTPRequestHandler 会据此返回 Content-Type。
+    if file_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        suffix = ".gif"
+    elif file_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        suffix = ".png"
+    elif file_bytes[:2] == b"\xff\xd8":
+        suffix = ".jpg"
+    else:
+        suffix = ".bin"
+    fname = f"bot_{_t.time():.0f}_{random.randint(1000,9999)}{suffix}"
     fpath = BASE_DIR / "static_images" / fname
     fpath.parent.mkdir(exist_ok=True)
     with open(fpath, "wb") as f:
         f.write(file_bytes)
 
-    # 动态读取 IMAGE_HOST，支持运行时更新无需重启（带 mtime 缓存）
-    img_host = ""
-    try:
-        _config_path = BASE_DIR / "config.py"
-        _config_mtime = _config_path.stat().st_mtime if _config_path.exists() else 0
-        if _IMAGE_HOST_CACHE["mtime"] != _config_mtime:
-            with open(_config_path, "r", encoding="utf-8") as _f:
-                for _line in _f:
-                    _m = _re.search(r'IMAGE_HOST\s*=\s*"([^"]*)"', _line)
-                    if _m:
-                        _IMAGE_HOST_CACHE["value"] = _m.group(1)
-                        break
-            _IMAGE_HOST_CACHE["mtime"] = _config_mtime
-        img_host = _IMAGE_HOST_CACHE["value"] or ""
-    except:
-        pass
-    img_host = img_host or IMAGE_HOST or "localhost"
-    host = img_host.replace("https://", "").replace("http://", "").rstrip("/")
-    image_url = f"https://{host}/{fname}"
-    log_info(f"图片URL: {image_url}, 文件大小: {os.path.getsize(fpath)} bytes")
+    image_base = _get_image_base_url()
+    image_url = f"{image_base}/{fname}"
+    host_mode = "临时隧道" if "trycloudflare.com" in image_base else "固定图床"
+    log_info(
+        f"图片URL({host_mode}): {image_url}, "
+        f"文件大小: {os.path.getsize(fpath)} bytes"
+    )
 
     try:
         from botpy.types.message import Media
 
-        if is_group:
-            media_resp = await BOT_API.post_group_file(group_openid=target_id, file_type=1, url=image_url)
-        else:
-            media_resp = await BOT_API.post_c2c_file(openid=target_id, file_type=1, url=image_url)
+        media_resp = None
+        for media_attempt in range(3):
+            try:
+                if is_group:
+                    media_resp = await BOT_API.post_group_file(
+                        group_openid=target_id, file_type=1, url=image_url
+                    )
+                else:
+                    media_resp = await BOT_API.post_c2c_file(
+                        openid=target_id, file_type=1, url=image_url
+                    )
+                break
+            except Exception as media_error:
+                error_text = str(media_error)
+                is_download_failure = (
+                    "富媒体文件下载失败" in error_text
+                    or "850026" in error_text
+                    or "40034001" in error_text
+                )
+                if not is_download_failure or media_attempt >= 2:
+                    raise
+                delay = 1.0 + media_attempt
+                log_error(
+                    f"QQ下载图片失败，{delay:.0f}秒后重试"
+                    f"({media_attempt + 1}/3): {image_url}"
+                )
+                await asyncio.sleep(delay)
         if not media_resp:
             log_error("QQ上传返回空")
-            return
+            return False
         log_info(f"QQ上传成功: uuid={media_resp.get('file_uuid','?')[:20]}...")
 
         media = Media(file_uuid=media_resp.get("file_uuid",""), file_info=media_resp.get("file_info",""), ttl=media_resp.get("ttl",0))
@@ -1246,7 +1340,7 @@ async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str
                         msg_type=7, msg_id=msg_id, media=media
                     )
                 log_info(f"消息发送成功: id={getattr(result, 'id', '?')}")
-                break
+                return True
             except Exception as send_err:
                 err_msg = str(send_err)
                 if 'msgseq' in err_msg.lower() or '去重' in err_msg:
@@ -1256,11 +1350,10 @@ async def _upload_and_send_image(target_id: str, file_bytes: bytes, content: str
                 raise send_err
     except Exception as e:
         log_error(f"图片发送失败: {e}")
+        return False
     finally:
-        # QQ异步下载需要时间，延迟5秒再删
-        await asyncio.sleep(5)
-        try: os.remove(fpath)
-        except: pass
+        # 延迟删除改为后台任务，不再让发送调用额外阻塞5秒。
+        asyncio.create_task(_remove_temp_file_later(fpath, 5.0))
 async def _c2c_send_raw(openid: str, content: str = "", msg_type: int = 0, msg_id: str = None, media=None):
     """绕过 botpy post_c2c_message 的 msg_seq bug，直接构建干净请求"""
     from botpy.http import Route
@@ -1285,24 +1378,37 @@ def _bot_send(target_id: str, content: str = "", file_image: bytes = None, is_gr
         content = filter_sensitive_words(content)
 
         # 有图片：保存本地 → 公网URL → 上传QQ → media发送（群聊/C2C均支持）
+        request_msg_id = _CTX_MSG_ID.get() or _CURRENT_MSG_ID
+        request_is_group = _CTX_IS_GROUP.get()
+        if request_is_group is not None:
+            is_group = request_is_group
+
         if file_image:
             coro = _upload_and_send_image(target_id, file_image, content=content,
-                                          is_group=is_group, msg_id=_CURRENT_MSG_ID)
+                                          is_group=is_group, msg_id=request_msg_id)
         elif is_group:
             coro = BOT_API.post_group_message(
                 group_openid=target_id, content=content, msg_type=0,
-                msg_id=_CURRENT_MSG_ID
+                msg_id=request_msg_id
             )
         else:
             # 绕过 botpy post_c2c_message 的 msg_seq bug，直接发干净请求
             coro = _c2c_send_raw(openid=target_id, content=content, msg_type=0,
-                                 msg_id=_CURRENT_MSG_ID)
+                                 msg_id=request_msg_id)
 
         loop = _get_main_loop()
         if loop is not None and loop.is_running():
             if threading.current_thread() is not threading.main_thread():
-                # 从to_thread线程池调用：线程安全调度协程
-                loop.call_soon_threadsafe(loop.create_task, coro)
+                # 工作线程需要等待真实发送结果，不再“排队即报成功”。
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                try:
+                    result = future.result(timeout=90 if file_image else 30)
+                except FutureTimeoutError:
+                    future.cancel()
+                    log_error("发送超时，已取消未完成的发送任务")
+                    return False
+                if file_image and result is not True:
+                    return False
             else:
                 asyncio.ensure_future(coro)
         else:
@@ -1319,6 +1425,8 @@ _MSG_IS_GROUP = True    # 当前消息是否为群聊（由 _route 设置）
 _CURRENT_MSG_ID = ""     # 当前消息ID，用于被动回复
 _CURRENT_MESSAGE = None  # 当前消息对象
 _MAIN_LOOP = None        # 主线程事件循环引用（由on_ready设置，供to_thread中使用）
+_CTX_MSG_ID = contextvars.ContextVar("qq_msg_id", default="")
+_CTX_IS_GROUP = contextvars.ContextVar("qq_is_group", default=None)
 
 def _get_main_loop():
     """获取主线程事件循环（线程安全）"""
@@ -1864,6 +1972,9 @@ class QQBotClient(Client):
         _MSG_IS_GROUP = hasattr(message, 'group_openid')
         _CURRENT_MSG_ID = getattr(message, 'id', '')
         _CURRENT_MESSAGE = message
+        # asyncio.to_thread 会传播 ContextVar，长时间 GIF 生成后仍能使用原请求的 msg_id。
+        _CTX_MSG_ID.set(_CURRENT_MSG_ID)
+        _CTX_IS_GROUP.set(_MSG_IS_GROUP)
 
         # 提取用户ID（群聊 author 有 member_openid，私聊 author 有 user_openid）
         author = getattr(message, 'author', None)
@@ -2097,10 +2208,17 @@ class QQBotClient(Client):
                 send_message(f"RAID系统出错: {e}", user_id, group_id)
 
 
+@synchronized("user-assets", lambda count, user_id, *args, **kwargs: user_id)
 def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool = False):
     """处理抽卡请求（盲盒模式）"""
-    gacha_before = None  # 用于异常退还
+    payment_taken = False
     try:
+        # 路由层检查与这里之间可能有另一个并发请求创建了会话。
+        if has_box_session(user_id):
+            reply = "你还有未开启的盲盒，请先开启或输入「取消」。"
+            send_message(f"<@{user_id}> {reply}" if group_id and user_id else reply, user_id, group_id)
+            return jsonify({"status": "pending_boxes", "message": reply})
+
         # 检查呱太数量
         cost = GACHA10_COST if count == 10 else GACHA_COST
         current_gacha = get_gacha_count(user_id)
@@ -2135,11 +2253,13 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
                     "remaining_cooldown": int(remaining_cooldown)
                 })
 
-        # 记录扣款前呱太数量（用于异常退还）
-        gacha_before = get_gacha_count(user_id)
-
         # 消耗呱太
-        spend_gacha(user_id, cost)
+        if not spend_gacha(user_id, cost):
+            current_gacha = get_gacha_count(user_id)
+            reply = f"呱太不足！当前呱太: {current_gacha}，需要: {cost}。"
+            send_message(f"<@{user_id}> {reply}" if group_id and user_id else reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "呱太不足", "current_gacha": current_gacha})
+        payment_taken = True
 
         # 十连冷却记录：更新最后一次十连时间戳
         if count == 10:
@@ -2330,7 +2450,7 @@ def handle_gacha(count: int, user_id: str, group_id, message_id, auto_open: bool
         log_error(f"抽卡处理失败: {e}\n{_tb.format_exc()}")
         # 异常退还呱太：如果扣款后操作失败，退还消耗的呱太
         try:
-            if gacha_before is not None and gacha_before >= cost:
+            if payment_taken:
                 add_gacha(user_id, cost)
                 log_info(f"异常退还 [{user_id}]: +{cost} 呱太")
         except Exception as refund_err:
@@ -2420,7 +2540,7 @@ def handle_team(user_id: str, group_id, cmd: str) -> dict:
 
             # 发队伍图片 + 简短提示
             team_data = load_team_data(user_id)
-            img_path = build_team_image(team_data, characters)
+            img_path = build_team_image(team_data, characters, card_stars=get_player_card_stars(user_id))
             text = f"🤖 自动配队完成"
             if group_id and user_id:
                 text = f"<@{user_id}> {text}"
@@ -2745,7 +2865,7 @@ def handle_team(user_id: str, group_id, cmd: str) -> dict:
                         reply += "\n[RAID队伍槽位 - 此队伍可用于raid挑战]"
                     # 显示新队伍
                     team_data = load_team_data(user_id)
-                    img_path = build_team_image(team_data, characters)
+                    img_path = build_team_image(team_data, characters, card_stars=get_player_card_stars(user_id))
                     if img_path:
                         if group_id and user_id:
                             text = f"<@{user_id}> {reply}"
@@ -2973,13 +3093,19 @@ def handle_defense_team(user_id: str, group_id, cmd: str) -> dict:
         return jsonify({"status": "error", "message": str(e)})
 
 
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_limited_gacha(user_id: str, group_id):
     """
     限定池十连：15000呱太，至少必出一个FES限定或期間限定
     每用户8分钟CD
     """
-    gacha_before = None  # 用于异常退还
+    payment_taken = False
     try:
+        if has_box_session(user_id):
+            reply = "你还有未开启的盲盒，请先开启或输入「取消」。"
+            send_message(f"<@{user_id}> {reply}" if group_id and user_id else reply, user_id, group_id)
+            return jsonify({"status": "pending_boxes", "message": reply})
+
         cost = LIMITED_GACHA_COST
         count = 10
 
@@ -3007,11 +3133,13 @@ def handle_limited_gacha(user_id: str, group_id):
             log_info(f"限定池冷却 [{user_id}]: 还需 {mins}分{secs}秒")
             return jsonify({"status": "cooldown", "message": "限定池冷却中", "remaining_seconds": int(remaining)})
 
-        # 记录扣款前呱太数量（用于异常退还）
-        gacha_before = get_gacha_count(user_id)
-
         # 消耗呱太 + 记录冷却
-        spend_gacha(user_id, cost)
+        if not spend_gacha(user_id, cost):
+            current_gacha = get_gacha_count(user_id)
+            reply = f"呱太不足！当前呱太: {current_gacha}，需要: {cost}。"
+            send_message(f"<@{user_id}> {reply}" if group_id and user_id else reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "呱太不足", "current_gacha": current_gacha})
+        payment_taken = True
         LIMITED_GACHA_COOLDOWN[user_id] = now_ts
 
         # 加载角色
@@ -3146,7 +3274,7 @@ def handle_limited_gacha(user_id: str, group_id):
         log_error(f"限定池处理失败: {e}\n{_tb2.format_exc()}")
         # 异常退还呱太：如果扣款后操作失败，退还消耗的呱太
         try:
-            if gacha_before is not None and gacha_before >= cost:
+            if payment_taken:
                 add_gacha(user_id, cost)
                 log_info(f"限定池异常退还 [{user_id}]: +{cost} 呱太")
         except Exception as refund_err:
@@ -3277,6 +3405,7 @@ def handle_sannoujo(user_id: str, group_id):
         return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_box_open(user_id: str, group_id: str, open_input: str):
     """处理盲盒开启请求"""
     try:
@@ -3317,6 +3446,10 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         red_crystal_gained = 0
         blue_crystal_gained = 0
         auto_conversion_messages = []  # 3星重复自动转化提示
+        known_card_ids = set(
+            str(card_id) for card_id in
+            load_pity_data(user_id).get("card_collection", {}).keys()
+        )
 
         # 开盲盒
         log_info(f"用户 {user_id} 开启盲盒，共 {len(indices)} 个，索引: {indices}")
@@ -3358,6 +3491,9 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
             card_id = str(character.get("card_id", ""))
             limit_type = character.get("limit_type", "")
             chara_name = character.get("name", "")
+            # 当前收藏系统可靠记录 2/3 星卡；同一十连内重复抽到也只标记第一张 NEW。
+            box["is_new"] = stars >= 2 and card_id not in known_card_ids
+            known_card_ids.add(card_id)
             
             # FES统计和提示
             fes_message = ""
@@ -3519,6 +3655,7 @@ def handle_box_open(user_id: str, group_id: str, open_input: str):
         return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_get_gacha(user_id: str, group_id):
     """处理获取呱太请求（每分钟限1次）"""
     try:
@@ -4045,60 +4182,43 @@ def handle_gacha_leaderboard(user_id: str, group_id):
         return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
 
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_exchange_crystal(user_id: str, group_id, crystal_type: str = None):
     """处理碎片兑换呱太请求
     :param crystal_type: None=全部, "red"=仅红碎片, "blue"=仅蓝碎片
     """
+    exchange_red = 0
+    exchange_blue = 0
+    reward_credited = False
     try:
-        # 获取用户碎片数量
-        red_crystal = get_red_crystal(user_id)
-        blue_crystal = get_blue_crystal(user_id)
 
-        # 根据类型决定兑哪些碎片
-        if crystal_type == "red":
-            if red_crystal == 0:
-                reply = "你没有红色碎片可以兑换！"
-                if group_id and user_id:
-                    reply = f"<@{user_id}> {reply}"
-                send_message(reply, user_id, group_id)
-                return jsonify({"status": "error", "message": "没有红碎片"})
-            exchange_red = red_crystal
-            exchange_blue = 0
-        elif crystal_type == "blue":
-            if blue_crystal == 0:
-                reply = "你没有蓝色碎片可以兑换！"
-                if group_id and user_id:
-                    reply = f"<@{user_id}> {reply}"
-                send_message(reply, user_id, group_id)
-                return jsonify({"status": "error", "message": "没有蓝碎片"})
-            exchange_red = 0
-            exchange_blue = blue_crystal
-        else:
-            # 全部兑换（现有逻辑）
-            if red_crystal == 0 and blue_crystal == 0:
-                reply = "你没有可以兑换的碎片！"
-                if group_id and user_id:
-                    reply = f"<@{user_id}> {reply}"
-                send_message(reply, user_id, group_id)
-                return jsonify({"status": "error", "message": "没有碎片可兑换"})
-            exchange_red = red_crystal
-            exchange_blue = blue_crystal
+        def take_crystals(pity_data):
+            nonlocal exchange_red, exchange_blue
+            if crystal_type in (None, "red"):
+                exchange_red = max(0, pity_data.get("red_crystal", 0))
+                pity_data["red_crystal"] = 0
+            if crystal_type in (None, "blue"):
+                exchange_blue = max(0, pity_data.get("blue_crystal", 0))
+                pity_data["blue_crystal"] = 0
+
+        update_json(get_pity_file(user_id), get_default_pity_data, take_crystals)
+
+        if exchange_red == 0 and exchange_blue == 0:
+            name = "红色碎片" if crystal_type == "red" else "蓝色碎片" if crystal_type == "blue" else "碎片"
+            reply = f"你没有{name}可以兑换！"
+            if group_id and user_id:
+                reply = f"<@{user_id}> {reply}"
+            send_message(reply, user_id, group_id)
+            return jsonify({"status": "error", "message": "没有碎片可兑换"})
 
         # 计算兑换数量（红碎片 1:5呱太，蓝碎片 1:20呱太）
         red_amount = exchange_red * 5
         blue_amount = exchange_blue * 20
         total_amount = red_amount + blue_amount
 
-        # 增量扣除碎片（load → 修改特定字段 → atomic save）
-        pity_data = load_pity_data(user_id)
-        if exchange_red > 0:
-            pity_data["red_crystal"] = max(0, pity_data.get("red_crystal", 0) - exchange_red)
-        if exchange_blue > 0:
-            pity_data["blue_crystal"] = max(0, pity_data.get("blue_crystal", 0) - exchange_blue)
-        save_pity_data(user_id, pity_data)
-
         # 增量添加呱太
         add_gacha(user_id, total_amount)
+        reward_credited = True
 
         # 构建回复消息
         parts = []
@@ -4128,6 +4248,14 @@ def handle_exchange_crystal(user_id: str, group_id, crystal_type: str = None):
         })
     
     except Exception as e:
+        if not reward_credited:
+            try:
+                if exchange_red:
+                    add_red_crystal(user_id, exchange_red)
+                if exchange_blue:
+                    add_blue_crystal(user_id, exchange_blue)
+            except Exception as rollback_error:
+                log_error(f"碎片兑换回滚失败: {rollback_error}")
         log_error(f"碎片兑换失败: {e}")
         return jsonify({"status": "error", "message": str(e)})  # jsonify 返回 None，避免 tuple
 
@@ -4161,6 +4289,7 @@ def save_cdkey_data(user_id: str, data: dict):
     _atomic_json_save(get_cdkey_file(user_id), data)
 
 
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_cdkey_redeem(user_id: str, group_id, key: str):
     """处理 CDKEY 兑换请求
     - 每个用户每个 CDKEY 只能兑换一次
@@ -4201,22 +4330,16 @@ def handle_cdkey_redeem(user_id: str, group_id, key: str):
         total_gacha = 0
 
         if reward_gacha > 0:
-            gacha_data = load_gacha_data(user_id)
-            gacha_data["gacha"] = gacha_data.get("gacha", 0) + reward_gacha
-            save_gacha_data(user_id, gacha_data)
+            add_gacha(user_id, reward_gacha)
             total_gacha += reward_gacha
             parts.append(f"🪙 呱太 +{reward_gacha}")
 
         if reward_red > 0:
-            pity_data = load_pity_data(user_id)
-            pity_data["red_crystal"] = pity_data.get("red_crystal", 0) + reward_red
-            save_pity_data(user_id, pity_data)
+            add_red_crystal(user_id, reward_red)
             parts.append(f"🔴 红碎片 +{reward_red}")
 
         if reward_blue > 0:
-            pity_data = load_pity_data(user_id)
-            pity_data["blue_crystal"] = pity_data.get("blue_crystal", 0) + reward_blue
-            save_pity_data(user_id, pity_data)
+            add_blue_crystal(user_id, reward_blue)
             parts.append(f"🔵 蓝碎片 +{reward_blue}")
 
         if not parts:
@@ -4260,6 +4383,7 @@ def handle_cdkey_redeem(user_id: str, group_id, key: str):
 
 
 # ========== 三星池子命令处理 ==========
+@synchronized("user-assets", lambda user_id, *args, **kwargs: user_id)
 def handle_3star_pool(user_id: str, group_id, raw_message: str):
     """
     处理三星池子抽卡请求
@@ -4372,6 +4496,26 @@ def save_rolling_battle_log(user_id: str, result: dict) -> str:
     # 只保留最近一次战斗
     logs = [result]
     _atomic_json_save(log_path, logs)
+
+    # 同时保存纯文本版本到static_images，通过HTTP 18080端口暴露
+    log_dir = BASE_DIR / "static_images" / "battle_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    txt_path = log_dir / f"{user_id}.txt"
+    lines = ["=" * 50, f"战斗日志 - {result['saved_at']}"]
+    battle_log = result.get("log", [])
+    if isinstance(battle_log, list):
+        for entry in battle_log:
+            if isinstance(entry, bytes):
+                entry = entry.decode('utf-8', errors='replace')
+            lines.append(str(entry))
+    else:
+        lines.append(str(battle_log))
+    lines.append("=" * 50)
+    try:
+        txt_path.write_text("\n".join(lines), encoding="utf-8")
+    except Exception:
+        pass  # 文本日志保存失败不影响主流程
+
     return f"battle_{user_id} (共1次)"
 
 
@@ -4458,7 +4602,7 @@ def handle_battle(user_id: str, group_id, raw_message: str, raw_mentions: list =
 
             # 生成双方VS配队图
             characters = get_characters_dict()
-            vs_img = build_vs_team_image(player_team, enemy_team, characters)
+            vs_img = build_vs_team_image(player_team, enemy_team, characters, card_stars=get_player_card_stars(user_id))
             at_message = _at_user(user_id, group_id)
             # vs_img saved for result merge
         else:
@@ -4467,13 +4611,15 @@ def handle_battle(user_id: str, group_id, raw_message: str, raw_mentions: list =
             enemy_name = f"AI({difficulty_names[ai_difficulty]})"
             characters = get_characters_dict()
             at_message = _at_user(user_id, group_id)
-            vs_img = build_vs_team_image(player_team, enemy_team, characters)
+            vs_img = build_vs_team_image(player_team, enemy_team, characters, card_stars=get_player_card_stars(user_id))
             # vs_img saved for result merge
 
         # 执行战斗
         log_info(f"战斗开始: {user_id} vs {enemy_user_id or 'AI'}")
+        player_card_stars = get_player_card_stars(user_id)
         result = BATTLE_INSTANCE.start_battle(player_team, enemy_team, challenger="player",
-                                              extra_characters={**get_characters_dict(), **BATTLE_CHARACTERS})
+                                              extra_characters={**get_characters_dict(), **BATTLE_CHARACTERS},
+                                              player_card_stars=player_card_stars)
 
         # 保存战斗日志（滚动保留最近3次）
         battle_log_key = save_rolling_battle_log(user_id, result)
@@ -4600,7 +4746,7 @@ def handle_boss_battle(user_id: str, group_id, raw_message: str):
         # 构建BOSS队伍用于VS图
         boss_team = {"battle_cards": [None, str(BOSS_CARD_ID)] + [None] * 4, "assist_cards": [None] * 6}
         characters = get_characters_dict()
-        vs_img = build_vs_team_image(player_team, boss_team, characters)
+        vs_img = build_vs_team_image(player_team, boss_team, characters, card_stars=get_player_card_stars(user_id))
 
         # 执行BOSS战
         at_message = _at_user(user_id, group_id)
@@ -5153,7 +5299,7 @@ if __name__ == '__main__':
     log_info("=" * 50)
 
     # 清理上次崩溃残留的临时图片，注册退出时清理
-    _cleanup_temp_images()
+    _run_capacity_maintenance()
     atexit.register(_cleanup_temp_images)
 
     # 每天第一次启动时备份抽卡记录

@@ -1,0 +1,6 @@
+Flask
+openpyxl
+Pillow
+pycryptodome
+qq-botpy
+requests

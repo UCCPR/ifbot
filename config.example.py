@@ -9,6 +9,10 @@ QQ_BOT_APP_ID = "你的AppID"     # 机器人 AppID（在开放平台"开发设�
 QQ_BOT_TOKEN = "你的Token"      # 机器人 Token（在"开发设置"页面生成）
 QQ_BOT_SECRET = "你的Secret"    # 机器人 Secret（在"开发设置"页面查看）
 
+# QQ富媒体下载地址。配置固定域名后，启动脚本不会再创建或写入trycloudflare临时地址。
+# 公网HTTPS请求需要转发到机器人内置图片服务的18080端口。
+IMAGE_HOST = "https://images.example.com"
+
 # ----------------------------------------------------------
 # KOOK Bot 配置（kook_bot.py 使用）
 # 在 https://developer.kookapp.cn 注册机器人后获取

@@ -5,7 +5,6 @@
 """
 
 import os
-import json
 import random
 from datetime import datetime
 from io import BytesIO
@@ -13,7 +12,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from card_image import find_attribute_icon, find_type_icon, get_level_image
+from card_image import (find_attribute_icon, find_type_icon, find_type_icon_non_gacha,
+                         get_level_image, render_attack_arrows, render_rarity_stars)
+from image_cache import get_rendered_image, load_shared_image, put_rendered_image
+from json_store import atomic_write_json, read_json
+from storage_maintenance import append_rotating_log
 
 
 # ========== 日志模块 ==========
@@ -21,8 +24,7 @@ def log_info(message: str):
     """记录普通信息到info目录"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_info.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] [INFO] {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] [INFO] {message}\n")
     print(f"[INFO] {message}")
 
 
@@ -30,8 +32,7 @@ def log_error(message: str):
     """记录错误信息到info目录"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_file = INFO_DIR / "gacha_error.log"
-    with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] [ERROR] {message}\n")
+    append_rotating_log(log_file, f"[{timestamp}] [ERROR] {message}\n")
     print(f"[ERROR] {message}")
 
 
@@ -44,6 +45,10 @@ OUTPUT_DIR = BASE_DIR / "output"
 # 队伍配置
 BATTLE_CARD_COUNT = 6  # 战斗卡数量
 ASSIST_CARD_COUNT = 6  # 支援卡数量（与战斗卡一一对应）
+
+def _load_cached_image(path, mode="RGBA"):
+    """使用进程级共享缓存加载小型素材；角色原图不会常驻内存。"""
+    return load_shared_image(path, mode)
 
 
 def _ensure_char_dict(characters):
@@ -75,14 +80,7 @@ def get_team_file(user_id: str) -> Path:
 
 def load_team_data(user_id: str) -> dict:
     """加载用户的队伍配置数据"""
-    team_file = get_team_file(user_id)
-    if team_file.exists():
-        try:
-            with open(team_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return create_default_team()
-    return create_default_team()
+    return read_json(get_team_file(user_id), create_default_team)
 
 
 def create_default_team() -> dict:
@@ -95,9 +93,7 @@ def create_default_team() -> dict:
 
 def save_team_data(user_id: str, team_data: dict):
     """保存用户的队伍配置数据"""
-    team_file = get_team_file(user_id)
-    with open(team_file, "w", encoding="utf-8") as f:
-        json.dump(team_data, f, indent=2)
+    atomic_write_json(get_team_file(user_id), team_data)
 
 
 # ========== 队伍预设系统（11个预设槽位：1-6普通 + 7-11 RAID） ==========
@@ -112,21 +108,16 @@ def get_presets_file(user_id: str) -> Path:
 
 def load_presets(user_id: str) -> dict:
     """加载所有预设"""
-    f = get_presets_file(user_id)
-    if f.exists():
-        try:
-            with open(f, "r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            # 兼容旧格式
-            if "presets" not in data:
-                data = {"presets": [None] * MAX_PRESETS, "cycle": 0}
-            # 确保 presets 长度正确
-            while len(data.get("presets", [])) < MAX_PRESETS:
-                data["presets"].append(None)
-            return data
-        except Exception:
-            pass
-    return {"presets": [None] * MAX_PRESETS, "cycle": 0, "active_slot": 0}
+    data = read_json(
+        get_presets_file(user_id),
+        lambda: {"presets": [None] * MAX_PRESETS, "cycle": 0, "active_slot": 0},
+    )
+    # 兼容旧格式并补齐新增槽位。
+    if "presets" not in data:
+        data = {"presets": [None] * MAX_PRESETS, "cycle": 0, "active_slot": 0}
+    while len(data.get("presets", [])) < MAX_PRESETS:
+        data["presets"].append(None)
+    return data
 
 
 def save_presets(user_id: str, data: dict):
@@ -136,9 +127,7 @@ def save_presets(user_id: str, data: dict):
     while len(presets) < MAX_PRESETS:
         presets.append(None)
     data["presets"] = presets[:MAX_PRESETS]
-    f = get_presets_file(user_id)
-    with open(f, "w", encoding="utf-8") as fp:
-        json.dump(data, fp, indent=2)
+    atomic_write_json(get_presets_file(user_id), data)
 
 
 def _get_active_slot(user_id: str) -> int:
@@ -252,14 +241,7 @@ def get_pity_file(user_id: str) -> Path:
 
 def load_pity_data(user_id: str) -> dict:
     """加载用户的抽卡记录数据"""
-    pity_file = get_pity_file(user_id)
-    if pity_file.exists():
-        try:
-            with open(pity_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+    return read_json(get_pity_file(user_id), dict)
 
 
 def get_user_3star_cards(user_id: str, characters: dict = None,
@@ -329,32 +311,54 @@ def get_user_3star_cards(user_id: str, characters: dict = None,
 
 
 # ========== 构建队伍图片 ==========
-def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
+def _team_card_cache_key(character: dict, is_battle: bool):
+    directions = character.get("attack_directions") or ()
+    if isinstance(directions, list):
+        directions = tuple(directions)
+    return (
+        str(character.get("card_id") or character.get("chara_id") or character.get("id") or ""),
+        str(character.get("icon_path") or ""),
+        int(character.get("stars", 3)),
+        str(character.get("element") or character.get("attribute") or ""),
+        str(character.get("type", "battle")),
+        directions,
+        bool(is_battle),
+    )
+
+
+def composite_team_card_image(character: dict, is_battle: bool = True) -> Image.Image:
     """
-    合成队伍卡牌图片
+    合成队伍卡牌图片，直接返回 PIL Image。
+
+    队伍图/VS图内部调用这个函数，避免中间 JPEG 编码后又立即解码。
     使用gacha_tmb_frame.png作为统一的框
     背景使用透明背景
     添加属性图标（左下角）和类型图标（正下方）
     """
+    cache_key = _team_card_cache_key(character, is_battle)
+    cached = get_rendered_image("team_card", cache_key)
+    if cached is not None:
+        return cached
+
     stars = character.get("stars", 3)
     icon_path = character.get("icon_path")
-    
+
     # 加载统一的框
     frame_path = str(LEVEL_DIR / "gacha_tmb_frame.png")
     if os.path.exists(frame_path):
-        frame_img = Image.open(frame_path).convert('RGBA')
+        frame_img = _load_cached_image(frame_path, 'RGBA')
     else:
         # 如果找不到统一框，使用星级框
         frame_path_fallback = get_level_image(stars, "frame")
         if frame_path_fallback and os.path.exists(frame_path_fallback):
-            frame_img = Image.open(frame_path_fallback).convert('RGBA')
+            frame_img = _load_cached_image(frame_path_fallback, 'RGBA')
         else:
             # 创建一个简单的白色边框
             frame_img = Image.new('RGBA', (120, 160), (255, 255, 255, 128))
     
     # 加载角色图标
     if icon_path and os.path.exists(icon_path):
-        char_img = Image.open(icon_path).convert('RGBA')
+        char_img = _load_cached_image(icon_path, 'RGBA')
     else:
         # 创建占位图
         char_img = Image.new('RGBA', (100, 100), (100, 100, 100, 255))
@@ -364,14 +368,14 @@ def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
     attr_icon_path = find_attribute_icon(attribute) if attribute else None
     attr_img = None
     if attr_icon_path and os.path.exists(attr_icon_path):
-        attr_img = Image.open(attr_icon_path).convert('RGBA')
+        attr_img = _load_cached_image(attr_icon_path, 'RGBA')
     
-    # 加载Battle/Assist图标（根据角色类型）
+    # 加载Battle/Assist图标（根据角色类型，非抽卡场景用battle_xxx.png）
     card_type = character.get("type", "battle")
-    type_icon_path = find_type_icon(card_type)
+    type_icon_path = find_type_icon_non_gacha(card_type)
     type_img = None
     if type_icon_path and os.path.exists(type_icon_path):
-        type_img = Image.open(type_icon_path).convert('RGBA')
+        type_img = _load_cached_image(type_icon_path, 'RGBA')
     
     bg_width, bg_height = frame_img.size
     
@@ -424,13 +428,30 @@ def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
         type_x = (bg_width - type_width) // 2
         type_y = bg_height - type_height
         output.paste(type_img, (type_x, type_y), type_img)
+
+    # B卡：叠加攻击方向箭头（颜色由属性决定）
+    if card_type == "battle":
+        dire_raw = character.get("attack_directions")
+        if dire_raw:
+            render_attack_arrows(output, dire_raw, attribute)
+
+    # 右下角星级标记（重复个数）
+    stars = character.get("stars", 3)
+    render_rarity_stars(output, stars)
     
     # 转换为RGB（保留透明度）
     output_rgb = Image.new('RGB', (bg_width, bg_height), (255, 255, 255))
     output_rgb.paste(output, (0, 0), output)
-    
+
+    put_rendered_image("team_card", cache_key, output_rgb)
+    return output_rgb
+
+
+def composite_team_card(character: dict, is_battle: bool = True) -> bytes:
+    """兼容旧调用方：需要 bytes 时才进行 JPEG 编码。"""
+    output_rgb = composite_team_card_image(character, is_battle=is_battle)
     bio = BytesIO()
-    output_rgb.save(bio, format='JPEG', optimize=True, quality=55)
+    output_rgb.save(bio, format='JPEG', optimize=False, quality=55)
     return bio.getvalue()
 
 
@@ -471,10 +492,10 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
         card_id = card.get("card_id")
         chara = characters.get(str(card_id)) if isinstance(characters, dict) else None
         if chara:
-            img_bytes = composite_team_card(chara, is_battle=True)
-            if img_bytes:
+            card_img = composite_team_card_image(chara, is_battle=True)
+            if card_img:
                 card_imgs.append({
-                    "img": Image.open(BytesIO(img_bytes)),
+                    "img": card_img,
                     "count": card.get("count", 1),
                     "card_id": card_id,
                     "type": card.get("type", "battle")
@@ -486,7 +507,7 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     # 使用bg_000001001.png作为背景
     bg_path = LEVEL_DIR / "bg_000001001.png"
     if bg_path.exists():
-        bg_img = Image.open(bg_path).convert('RGB')
+        bg_img = _load_cached_image(bg_path, 'RGB')
         bg_w, bg_h = bg_img.size
     else:
         # 如果没有背景，使用默认尺寸
@@ -564,12 +585,12 @@ def build_3star_cards_image(user_id: str, characters: list, page: int = 1, page_
     # 保存图片
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"team_cards_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
-    output.convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
+    output.save(img_path, format='JPEG', optimize=False, quality=55)
     
     return str(img_path), current_page_cards, total_pages
 
 
-def build_team_image(team_data: dict, characters: list, hp_data: dict = None) -> str:
+def build_team_image(team_data: dict, characters: list, hp_data: dict = None, card_stars: dict = None) -> str:
     """
     构建队伍展示图片
     第一行：6个BattleCard
@@ -577,6 +598,7 @@ def build_team_image(team_data: dict, characters: list, hp_data: dict = None) ->
     背景为1920x1080，调整12张卡的位置使其舒适
     :param hp_data: raid血量数据 {"hp": [3000, 0, ...], "alive": [True, False, ...]}
                     非None时在A卡下方绘制简易血条
+    :param card_stars: 玩家卡牌星级 {card_id: star_level}，用于覆盖默认3星
     """
     characters = _ensure_char_dict(characters)
     battle_cards = team_data.get("battle_cards", [None] * BATTLE_CARD_COUNT)
@@ -591,8 +613,10 @@ def build_team_image(team_data: dict, characters: list, hp_data: dict = None) ->
         if card_id:
             chara = characters.get(str(card_id))  # 直接通过card_id获取
             if chara:
-                img_bytes = composite_team_card(chara, is_battle=True)
-                battle_imgs.append(Image.open(BytesIO(img_bytes)))
+                if card_stars and str(card_id) in card_stars:
+                    chara = dict(chara)
+                    chara['stars'] = card_stars[str(card_id)]
+                battle_imgs.append(composite_team_card_image(chara, is_battle=True))
             else:
                 battle_imgs.append(create_empty_slot_image())
         else:
@@ -602,8 +626,10 @@ def build_team_image(team_data: dict, characters: list, hp_data: dict = None) ->
         if card_id:
             chara = characters.get(str(card_id))
             if chara:
-                img_bytes = composite_team_card(chara, is_battle=False)
-                assist_imgs.append(Image.open(BytesIO(img_bytes)))
+                if card_stars and str(card_id) in card_stars:
+                    chara = dict(chara)
+                    chara['stars'] = card_stars[str(card_id)]
+                assist_imgs.append(composite_team_card_image(chara, is_battle=False))
             else:
                 assist_imgs.append(create_empty_slot_image())
         else:
@@ -626,7 +652,7 @@ def build_team_image(team_data: dict, characters: list, hp_data: dict = None) ->
     
     if bg_path:
         log_info(f"使用队伍背景图片: {bg_path}")
-        bg_img = Image.open(bg_path).convert('RGB')
+        bg_img = _load_cached_image(bg_path, 'RGB')
         # 缩放背景图以适应1920x1080
         bg_img_resized = bg_img.resize((bg_width, bg_height), Image.Resampling.LANCZOS)
         output = Image.new('RGB', (bg_width, bg_height), (50, 50, 50))
@@ -723,15 +749,16 @@ def build_team_image(team_data: dict, characters: list, hp_data: dict = None) ->
     # 保存图片
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"team_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.png"
-    output.convert('RGB').save(img_path, format='JPEG', optimize=True, quality=55)
+    output.save(img_path, format='JPEG', optimize=False, quality=55)
     
     return str(img_path)
 
 
-def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -> str:
+def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list, card_stars: dict = None) -> str:
     """
     构建双方对战配队图：玩家在上，敌方在下，中间VS图标
     紧凑布局，压缩输出
+    :param card_stars: 玩家卡牌星级 {card_id: star_level}，用于覆盖默认3星
     """
     characters = _ensure_char_dict(characters)
     battle_cards_p = player_team.get("battle_cards", [None] * BATTLE_CARD_COUNT)
@@ -744,13 +771,19 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
         for cid in battle_ids:
             if cid:
                 chara = characters.get(str(cid)) if isinstance(characters, dict) else None
-                b_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=True))) if chara else create_empty_slot_image())
+                if chara and card_stars and str(cid) in card_stars:
+                    chara = dict(chara)
+                    chara['stars'] = card_stars[str(cid)]
+                b_imgs.append(composite_team_card_image(chara, is_battle=True) if chara else create_empty_slot_image())
             else:
                 b_imgs.append(create_empty_slot_image())
         for cid in assist_ids:
             if cid:
                 chara = characters.get(str(cid)) if isinstance(characters, dict) else None
-                a_imgs.append(Image.open(BytesIO(composite_team_card(chara, is_battle=False))) if chara else create_empty_slot_image())
+                if chara and card_stars and str(cid) in card_stars:
+                    chara = dict(chara)
+                    chara['stars'] = card_stars[str(cid)]
+                a_imgs.append(composite_team_card_image(chara, is_battle=False) if chara else create_empty_slot_image())
             else:
                 a_imgs.append(create_empty_slot_image())
         return b_imgs, a_imgs
@@ -783,7 +816,7 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
     vs_img = None
     vs_h = 0
     if vs_path.exists():
-        vs_img = Image.open(vs_path).convert("RGBA")
+        vs_img = _load_cached_image(vs_path, 'RGBA')
         vs_target_h = 30
         vs_scale = vs_target_h / vs_img.height
         vs_img = vs_img.resize((int(vs_img.width * vs_scale), vs_target_h), Image.Resampling.LANCZOS)
@@ -799,7 +832,7 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
             bg_path = str(test_path)
             break
     if bg_path:
-        output = Image.open(bg_path).convert('RGB').resize((bg_width, total_h), Image.Resampling.LANCZOS)
+        output = _load_cached_image(bg_path, 'RGB').resize((bg_width, total_h), Image.Resampling.LANCZOS)
     else:
         output = Image.new('RGB', (bg_width, total_h), (40, 40, 60))
 
@@ -823,7 +856,7 @@ def build_vs_team_image(player_team: dict, enemy_team: dict, characters: list) -
 
     output_idx = random.randint(1000, 9999)
     img_path = OUTPUT_DIR / f"vs_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{output_idx}.jpg"
-    output.save(img_path, format='JPEG', optimize=True, quality=65)
+    output.save(img_path, format='JPEG', optimize=False, quality=65)
     return str(img_path)
 
 
@@ -832,7 +865,7 @@ def create_empty_slot_image() -> Image.Image:
     # 使用三星背景作为空槽位背景
     bg_path = get_level_image(3, "bg")
     if bg_path and os.path.exists(bg_path):
-        bg_img = Image.open(bg_path).convert('RGB')
+        bg_img = _load_cached_image(bg_path, 'RGB')
     else:
         bg_img = Image.new('RGB', (120, 160), (50, 50, 50))
     
