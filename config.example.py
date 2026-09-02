@@ -2,7 +2,7 @@
 # 复制此文件为 config.py 并填写实际值
 
 # ============================================================
-# QQ 开放平台 Bot 配置（qq_bot.py 使用）
+# QQ 开放平台 Bot 配置（qq_bot_ws.py 使用）
 # 在 https://q.qq.com 注册机器人后获取以下信息
 # ============================================================
 QQ_BOT_APP_ID = "你的AppID"     # 机器人 AppID（在开放平台"开发设置"页面查看）
@@ -74,11 +74,14 @@ GACHA_2STAR_PROB = 23   # 2星概率（权重）
 GACHA_3STAR_PROB = 3    # 3星概率（权重）
 
 # 管理员配置
-ADMIN_QQ = "3590876913"  # 管理员QQ号，可使用管理命令
+ADMIN_QQ = "你的管理员用户ID"  # 可使用管理命令的用户ID
 
 # BOSS战配置
 BOSS_CARD_ID = "100430006"  # BOSS战使用的卡牌ID（3星B卡）
 BOSS_BATTLE_COOLDOWN_SECONDS = 60  # BOSS战冷却时间（秒）
+
+# CDKEY 配置：键为兑换码，值为奖励数量
+CDKEYS = {}
 
 # 额外配置示例（自定义添加）
 DEBUG_MODE = False  # 是否开启调试模式

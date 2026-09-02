@@ -1,250 +1,203 @@
-# TOARU Bot - 幻想收束的模拟抽卡bot
+# IFBot
 
-![Python](https://img.shields.io/badge/-Python-000000?style=flat&logo=python)  
-基于Napcat/qq官方/kook的多端通用bot
+![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-Apache%202.0-blue)
 
-## 声明
-本项目仅用于个人学习，不得用于商业用途
+《魔法禁书目录 幻想收束》抽卡、配队与战斗模拟机器人。当前主要运行方式是基于 QQ 官方 Bot API 的 WebSocket 客户端，同时保留 NapCat、QQ 回调和 KOOK 入口。
 
-## 战绩
-![无敌了](RMIMAGE/战绩.png)  
+> 本项目仅供个人学习与技术研究，不得用于商业用途。
 
-群友们一天抽了一万多次，鉴定为纯血ifp👍，账号已做脱敏处理
+## 功能
 
-## 功能特性
+- 单抽、十连、限定池、FES 保底与十连二星保底
+- 盲盒开箱、黑色盲盒和星级突变
+- 卡牌收藏、红蓝碎片、三星兑换池和 CDKEY
+- 每日签到、呁太经济、个人记录和全服统计
+- 6 个战斗位 + 6 个支援位，多套队伍预设与自动配队
+- PVE、PVP、BOSS、排行榜和排位奖励
+- 战斗文本日志与动态 GIF 渲染
+- Raid/救援活动系统
+- JSON 原子写入、并发保护、每日备份和存储清理
 
-### 抽卡系统
-- 单抽 - 消耗300呱太抽取一张卡
-- 十连 - 消耗3000呱太抽取十张卡  
-- 保底机制 - 150抽必出FES限定，十连必出至少1个二星
+![战绩截图](RMIMAGE/战绩.png)
 
-### 机制
-- 先出盲盒再抽
-- FES限定使用特殊盲盒图
-- 黑呱太，开出后为2星或3星
-- 突变机制：开盲盒时有概率发生星级突变
+## 运行入口
 
-### 战斗系统
-- 根据卡牌的属性进行AI自动决策和战斗
-- if的战斗机制很复杂
-- PVP、PVE，竞技场排位系统
-- 具有复杂词条的战斗系统
+| 文件 | 用途 | 建议 |
+| --- | --- | --- |
+| `qq_bot_ws.py` | QQ 官方 Bot WebSocket 版 | 当前主入口 |
+| `qq_bot.py` | QQ 官方回调版 | 兼容入口 |
+| `gacha_bot.py` | NapCat/OneBot 版 | 旧部署兼容 |
+| `kook_bot.py` | KOOK 版 | 独立配置 |
 
-### 碎片
-- 1星卡自动转化为1个红色碎片
-- 2星卡自动转化为1个蓝色碎片
-- 碎片可兑换呱太，有专属池子
+以下部署说明默认使用 `qq_bot_ws.py`。
 
-### 签到
-- 每日签到
+## 快速开始
 
-### 个人记录
-- 显示累计抽卡、累计三星、碎片数量
-- 分页显示所有三星卡收藏（每页10张），支持翻页
-- 重复三星卡显示计数标记
+### 1. 准备环境
 
-### 排行榜
-- 根据战斗胜负排名（前十名）
-- AI自动配队占位
-
-### 彩蛋
-- 抽出FES角色时显示全服第几个该角色
-- 触发FES保底时显示提示信息
-- 三王女：输出十个三王女！
-
-### 配队系统
-- 使用三星卡配置队伍
-- 队伍包含6个战斗位和6个支援位，自动分配位置
-- 分页查看配置拥有的三星卡（每页50）
-- 包含6个队伍槽位，可以自由切换，可配置防守队
-- 程序自动配队
-
-## 如何食用：
-
-### 1. 环境
 - Python 3.8+
-- [Napcat](https://github.com/NapNeko/NapCatQQ)
+- QQ 开放平台 Bot 的 AppID、Token 和 Secret
+- 用于 QQ 下载图片的公网 HTTPS 地址（可选固定域名或 Cloudflare Tunnel）
 
-### 2. 安装依赖
 ```bash
-pip install flask pillow openpyxl
+git clone https://github.com/UCCPR/ifbot.git
+cd ifbot
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 3. 配置Napcat
-参考 [NAPCAT_SETUP.md](NAPCAT_SETUP.md) 配置Napcat框架
+Windows PowerShell 激活虚拟环境：
 
-### 4. 配置机器人
-配置config.py
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
 
-### 5. 资源文件
-- `卡牌信息.xlsx`
-- `iconimage/` - 角色卡图目录（card_cutin_xxx.png）
-- `level/` - 框和背景图目录（gacha_tmb_xx_yy.png）
+### 2. 创建配置
 
-### 6. 运行NapCat
-具体请参照[NapCat文档](https://napcat.napneko.icu/)
+Linux/macOS：
 
-### 7. 运行机器人
 ```bash
-python gacha_bot.py
+cp config.example.py config.py
 ```
 
-## 使用说明
+Windows PowerShell：
 
-### 基本命令
-| 命令 | 说明 |
-|------|------|
-| 单抽 | 抽一张（300呱太） |
-| 十连 | 抽十张（3000呱太） |
-| 获取呱太 | 获得10000呱太 |
-| 签到 | 每日签到（30000呱太） |
-| 个人记录 | 查看个人统计 |
-| 兑换呱太 | 用碎片兑换呱太 |
-| 排行榜 | 查看战力排行榜 |
-| 详细信息 | 查看本次抽卡详细信息 |
-| 帮助 | 显示帮助信息 |
-| 三王女 | 输出十个三王女 |
-
-### 开箱命令
-| 命令 | 说明 |
-|------|------|
-| 1/2/3... 或 选择1/选择2... | 开启指定编号 |
-| 全部开 | 开启所有 |
-| 剩下的全部开 | 开启剩余未开 |
-
-### 个人记录翻页
-| 命令 | 说明 |
-|------|------|
-| 下一页 | 查看下一页三星卡 |
-| 上一页 | 查看上一页三星卡 |
-
-### 配队命令
-| 命令 | 说明 |
-|------|------|
-| 队伍 | 查看当前队伍配置（图片） |
-| 队伍 我的卡 | 查看拥有的三星卡 |
-| 队伍 我的卡 下一页 | 查看下一页三星卡 |
-| 队伍 我的卡 上一页 | 查看上一页三星卡 |
-| 队伍 设置 位置 序号 | 将当前页序号的卡牌加入队伍 |
-| 队伍 清除 位置 | 清除该位置的卡牌 |
-| 队伍 清空 | 清空所有队伍配置 |
-
-### 三星池子命令
-| 命令 | 说明 |
-|------|------|
-| 三星池子 | 查看池子介绍和可抽取次数 |
-| 红抽 | 使用1500红色碎片抽卡 |
-| 蓝抽 | 使用350蓝色碎片抽卡 |
-
-## 文件结构
-```
-/
-├── gacha_bot.py          # 主程序
-├── team_system.py        # 配队系统模块
-├── 卡牌信息.xlsx         # 卡牌数据
-├── iconimage/            # 角色卡图
-├── level/                # 框和背景图
-├── info/                 # 用户数据和日志
-├── output/               # 临时输出图片
-└── README.md             # 说明文档
+```powershell
+Copy-Item config.example.py config.py
 ```
 
-## 更新日志
+然后编辑 `config.py`，至少填写：
 
-### v0.0.01 (2026-06-09)
-- 初始版本发布
-- 实现基础抽卡功能（单抽、十连）
-- 支持角色图、框、背景图合成
-- 添加呱太系统
-- 添加保底机制
-- 稍稍能用了
+```python
+QQ_BOT_APP_ID = "..."
+QQ_BOT_TOKEN = "..."
+QQ_BOT_SECRET = "..."
+ADMIN_QQ = "..."
+```
 
-### v0.0.02 (2026-06-09)
-- 修改保底为FES限定三星保底
-- 实现三星概率分配
-- 添加十连保底
-- 添加FES统计功能
+`config.py` 包含真实凭证，已被 `.gitignore` 排除，不要将它提交到任何公开仓库。
 
-### v0.0.03 (2026-06-09)
-- 添加碎片系统
-- 添加个人记录查询
-- 添加排行榜功能
+### 3. 配置图片服务
 
-### v0.0.05 (2026-06-09)
-- 添加"十抽跳过"命令
-- 添加"三王女"特殊命令
+机器人内置图片 HTTP 服务，默认端口为 `18080`。`IMAGE_HOST` 应填写能够转发到该端口的公网 HTTPS 地址：
 
-### v0.0.1 (2026-06-10)
-- 实现三星卡收藏分页显示
-- 重复三星卡显示计数标记
-- 统一背景图处理方式
-- 添加详细信息查询命令
+```python
+IMAGE_HOST = "https://images.example.com"
+```
 
-### v0.0.11 (2026-06-10)
-- 新增配队系统
-	- 使用序号选择卡牌加入队伍
-	- 自动识别卡类型
+- 已有固定域名：将反向代理或 Cloudflare Named Tunnel 指向 `http://127.0.0.1:18080`。
+- 没有固定域名：`start_qq_bot.sh` 可启动 Cloudflare Quick Tunnel，并更新 `config.py` 中的地址。
 
-### v0.0.12 (2026-06-10)
-- 新增三星only
-- 显示可抽取次数
+### 4. 前台运行
 
-### v0.0.13 (2026-06-11)
-- 修bug
+```bash
+python3 qq_bot_ws.py
+```
 
-### v0.0.14 (2026-06-11)
-- 控制消息发送速率
-- 增加日活数据，可以在后台看到
-- 添加敏感词过滤能力
+首次启动建议使用前台模式，确认 Bot 连接、Excel 数据、图片服务和存档读写正常。
 
-### v0.0.15 (2026-06-12)
-- 增加自动对战系统，支持PVE和PVP
-- 修改排行榜系统
-- 自动配队
+## Linux 服务部署
 
-### v0.0.2 ！ (2026-06-13)
-- 重构战斗系统，复刻了if6种属性、具有21个不同buff词条、多种状态效果的复杂战斗系统
-- 修复排行榜系统
-- 修复自动配队
-- 增加了队伍的槽位，可以自由切换
-- 大大压缩图片，降低网络耗费
-- 添加管理员命令
-- 热修复，修了巨多bug
+仓库内的 systemd 脚本默认项目路径为 `/home/root/zmdbot`。如果使用其他路径，请先修改 `qqbot.service` 和 `setup_services.sh` 中的路径。
 
-### v0.0.21 (2026-06-15)
-- 增加战斗GIF实时生成功能，待完善
-- 修了一整天BUG，发现大大低估了这个功能的实现难度
-- 这真的要模拟出一整个gameloop
-- 吓哭了
+```bash
+sudo mkdir -p /home/root
+sudo git clone https://github.com/UCCPR/ifbot.git /home/root/zmdbot
+cd /home/root/zmdbot
 
-### v0.0.22 (2026-06-16)
-- 移植到了Kook！
-- 后台转到了服务器
-- 玩玩Kook的BOT
-- 还是官方支持的bot好
+sudo pip3 install -r requirements.txt
+cp config.example.py config.py
+# 编辑 config.py
 
-## v0.0.3!(2026-06-18)
-- QQ官方bot突然复活了
-- 不说啥了，立刻移植
-- 使用websocket
-- GIF生成器进一步改进，真正实现了模拟gameloop的目标
-- ifbot堂堂复活！
+sudo bash setup_services.sh
+```
 
-## v0.0.3.1!(2026-06-23)
-- 这几天都在处理QQBOT稳定性的问题
-- 搭了一个稳定图床，甚至为了它买了一个域名
-- 反复崩溃真难受呀，还好总算摸索出一套稳定24h运行bot的方法
-- 为了保护数据加入了自动备份功能
-- 抽卡可以取消，返还呱太，改进体验
-- 新增我的卡筛选功能，配队便利化
-- 排行榜的奖励系统上线
-- 新增CDK系统
-- 新增三星卡兑换碎片功能
-- 战斗系统和GIF生成依然有很多问题，这也是这段时间主要的工作方向
+常用维护命令：
 
-## 许可证
+```bash
+systemctl status qqbot
+journalctl -u qqbot -f
+systemctl restart qqbot
+systemctl stop qqbot
+bash status.sh
+```
 
-Apache 2.0
+## 存档与迁移
 
+所有路径均相对于项目根目录。
 
+| 路径 | 内容 | 是否应上传 |
+| --- | --- | --- |
+| `info/` | 玩家卡牌、货币、签到、队伍、排行榜、活动和日志 | 否 |
+| `backup/` | 按日期保存的存档备份 | 否 |
+| `config.py` | Bot 凭证与私有运行配置 | 否 |
+| `output/` | 临时生成图片 | 否 |
+| `static_images/` | 内置 HTTP 服务对外暴露的临时文件 | 否 |
 
+主要存档命名：
+
+- `pity_<user_id>.json`：抽卡记录、卡牌收藏和碎片
+- `gacha_<user_id>.json`：呁太余额
+- `signin_<user_id>.json`：签到记录
+- `team_<user_id>.json` / `team_presets_<user_id>.json`：队伍与预设
+- `battle_<user_id>.json`：最近战斗日志
+- `ranking.json`：排行榜
+- `rescue_event.json`：救援活动进度
+
+迁移到新机器时：
+
+1. 停止旧机器人，避免复制期间继续写入。
+2. 在新机器克隆仓库并安装依赖。
+3. 安全复制 `info/`、`backup/` 和 `config.py`。
+4. 确认新机器的运行账户对这些目录有读写权限。
+5. 使用前台模式验证存档，然后再启用 systemd。
+
+## 常用命令
+
+| 类别 | 示例 |
+| --- | --- |
+| 抽卡 | `单抽`、`十连`、`限定十连`、`十抽跳过` |
+| 资产 | `获取呁太`、`签到`、`个人记录`、`兑换呁太`、`红抽`、`蓝抽` |
+| 队伍 | `队伍`、`队伍 我的卡`、`队伍 自动配队`、`队伍 切换 1` |
+| 战斗 | `战斗`、`对战`、`BOSS战`、`战斗日志`、`战斗GIF` |
+| 竞技 | `排行榜`、`抽卡排行`、`挑战 1` |
+| 帮助 | `帮助`、`help` |
+
+队伍设置、筛选和翻页命令较多，请在 Bot 内发送 `帮助` 查看当前版本的完整说明。
+
+## 目录结构
+
+```text
+ifbot/
+├── qq_bot_ws.py          # QQ 官方 WebSocket 主入口
+├── battle_system.py      # 战斗引擎
+├── gif_renderer.py       # 战斗 GIF 渲染
+├── team_system.py        # 队伍与预设
+├── ranking.py            # 排行榜与竞技
+├── rescue_event.py       # Raid/救援活动
+├── json_store.py          # 并发安全的 JSON 存储
+├── storage_maintenance.py # 日志轮转与存储清理
+├── 卡牌信息.xlsx          # 抽卡卡池数据
+├── cards_completed.xlsx  # 战斗数值
+├── iconimage/             # 角色卡图
+├── level/                 # 盲盒、边框和背景资源
+├── state_icon/            # 战斗状态图标
+├── config.example.py      # 可公开配置模板
+├── requirements.txt       # Python 依赖
+├── info/                  # 本地玩家存档，不入库
+└── backup/                # 本地存档备份，不入库
+```
+
+## 安全注意事项
+
+- 不要提交 `config.py`、`config.json`、`.env`、`info/` 或 `backup/`。
+- 不要把 Token 写入 Git 远程 URL、启动脚本或问题日志。
+- 如果凭证曾进入公开 Git 历史，仅删除最新版文件并不安全：应立即轮换凭证，并按需要清理历史。
+- 迁移存档时使用加密通道，不要通过公开仓库或公开网盘传输。
+
+## License
+
+本项目使用 [Apache License 2.0](LICENSE)。
