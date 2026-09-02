@@ -1,4 +1,4 @@
-# IFBot
+# TOARU Bot - 幻想收束的模拟抽卡bot
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue)
@@ -9,7 +9,7 @@
 
 ## 功能
 
-- 单抽、十连、限定池、FES 保底与十连二星保底
+- 单抽、十连、限定池、FES 保底与十连二星保底，复刻if卡池（我尽力了
 - 盲盒开箱、黑色盲盒和星级突变
 - 卡牌收藏、红蓝碎片、三星兑换池和 CDKEY
 - 每日签到、呱太经济、个人记录和全服统计
@@ -18,10 +18,10 @@
 - 战斗文本日志与动态 GIF 渲染
 - Raid/救援活动系统
 - JSON 原子写入、并发保护、每日备份和存储清理
-
+无敌了孩子们
 ![战绩截图](RMIMAGE/战绩.png)
-
-## 运行入口
+群友们一天抽了一万多次，鉴定为纯血ifp👍
+## 如何食用
 
 | 文件 | 用途 | 建议 |
 | --- | --- | --- |
@@ -124,36 +124,6 @@ systemctl restart qqbot
 systemctl stop qqbot
 bash status.sh
 ```
-
-## 存档与迁移
-
-所有路径均相对于项目根目录。
-
-| 路径 | 内容 | 是否应上传 |
-| --- | --- | --- |
-| `info/` | 玩家卡牌、货币、签到、队伍、排行榜、活动和日志 | 否 |
-| `backup/` | 按日期保存的存档备份 | 否 |
-| `config.py` | Bot 凭证与私有运行配置 | 否 |
-| `output/` | 临时生成图片 | 否 |
-| `static_images/` | 内置 HTTP 服务对外暴露的临时文件 | 否 |
-
-主要存档命名：
-
-- `pity_<user_id>.json`：抽卡记录、卡牌收藏和碎片
-- `gacha_<user_id>.json`：呱太余额
-- `signin_<user_id>.json`：签到记录
-- `team_<user_id>.json` / `team_presets_<user_id>.json`：队伍与预设
-- `battle_<user_id>.json`：最近战斗日志
-- `ranking.json`：排行榜
-- `rescue_event.json`：救援活动进度
-
-迁移到新机器时：
-
-1. 停止旧机器人，避免复制期间继续写入。
-2. 在新机器克隆仓库并安装依赖。
-3. 安全复制 `info/`、`backup/` 和 `config.py`。
-4. 确认新机器的运行账户对这些目录有读写权限。
-5. 使用前台模式验证存档，然后再启用 systemd。
 
 ## 常用命令
 
